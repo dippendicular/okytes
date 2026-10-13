@@ -1,0 +1,123 @@
+# Private assistant configuration and local tooling
+.agents/
+.tools/
+.codex/
+AGENTS.md
+AGENTS.override.md
+
+# Rust / Cargo
+/target/
+**/target/
+*.rs.bk
+*.pdb
+
+# Node.js / React / Vite / Tauri frontend
+node_modules/
+**/node_modules/
+.pnpm-store/
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.next/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+.vite/
+*.tsbuildinfo
+
+# Tauri generated bundles and packaging outputs
+/src-tauri/gen/
+**/src-tauri/gen/
+*.app/
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.msi
+*.msix
+*.exe
+*.run
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.local
+
+# Secrets, signing keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+*.asc
+*.sig
+!tests/fixtures/**/*.pem
+!tests/fixtures/**/*.key
+
+# Download engine runtime state / user downloads
+*.part
+*.partial
+*.download
+*.aria2
+*.resume
+*.checkpoint
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.engine-lock
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+/downloads/
+/tmp/
+/temp/
+/runtime/
+
+# Logs, profiling, crash dumps
+*.log
+logs/
+*.profraw
+*.profdata
+*.cpuprofile
+*.heapprofile
+*.dmp
+/core
+/core.*
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# Python utilities / local tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Temporary artifacts
+.cache/
+*.tmp
+*.temp

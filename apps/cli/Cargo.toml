@@ -1,0 +1,26 @@
+[package]
+name = "okytes-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface for Okytes download manager"
+
+[dependencies]
+okytes-core.workspace = true
+okytes-transport-http.workspace = true
+okytes-persistence.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+okytes-test-support.workspace = true
+tempfile.workspace = true

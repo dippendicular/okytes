@@ -1,0 +1,25 @@
+[package]
+name = "okytes-persistence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQLite persistence layer for Okytes download manager"
+
+[dependencies]
+okytes-core.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
+chrono.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tempfile.workspace = true
+proptest.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/transport-http",
+    "crates/persistence",
+    "crates/test-support",
+    "apps/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/nicepkg/okytes"
+rust-version = "1.95"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+
+# Persistence
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+
+# Errors
+thiserror = "1"
+anyhow = "1"
+
+# Diagnostics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Hashing
+sha2 = "0.10"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Testing
+proptest = "1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful"] }
+http-body-util = "0.1"
+tempfile = "3"
+
+# Utilities
+bytes = "1"
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+futures = "0.3"
+
+# Workspace crates
+okytes-core = { version = "=0.1.0", path = "crates/core" }
+okytes-transport-http = { version = "=0.1.0", path = "crates/transport-http" }
+okytes-persistence = { version = "=0.1.0", path = "crates/persistence" }
+okytes-test-support = { version = "=0.1.0", path = "crates/test-support" }

@@ -1,0 +1,23 @@
+[package]
+name = "okytes-transport-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTP/HTTPS transport implementation for Okytes download manager"
+
+[dependencies]
+okytes-core.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+bytes.workspace = true
+url.workspace = true
+futures.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tempfile.workspace = true
+okytes-test-support.workspace = true
