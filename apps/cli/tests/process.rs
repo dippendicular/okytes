@@ -21,7 +21,11 @@ impl Drop for Process {
     }
 }
 fn command(db: &std::path::Path) -> Command {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_okytes-cli"));
+    // Release validation can exercise the installed executable with the same
+    // crash-recovery and changed-validator fixtures as the workspace binary.
+    let binary = std::env::var_os("OKYTES_INSTALLED_CLI")
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_okytes-cli").into());
+    let mut c = Command::new(binary);
     c.arg("--db").arg(db).arg("--json");
     c
 }

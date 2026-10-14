@@ -315,3 +315,11 @@ Okytes is dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT)
 *Okytes Download Manager*
 
 For a source build, first run `node scripts/prepare-vendor.mjs`. This restores the checksum-pinned torrent dependency patches into the ignored `vendor/` directory.
+
+Installation and removal instructions are in the [installation guide](packaging/INSTALLATION.md).
+Release artifacts identify their architecture, signing status and installation
+verification. Software updates are checked manually from Settings; downloading,
+signature verification and installation are separate steps.
+
+For source builds and contributions, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Please report vulnerabilities through the [security disclosure process](SECURITY.md).

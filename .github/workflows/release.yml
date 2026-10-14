@@ -1,0 +1,233 @@
+name: Release candidate
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to validate (no publication)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            platform: windows
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            platform: windows
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: macos
+    runs-on: ${{ matrix.os }}
+    environment: release
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      TARGET: ${{ matrix.target }}
+      PLATFORM: ${{ matrix.platform }}
+      OKYTES_UPDATE_PUBLIC_KEY: ${{ vars.OKYTES_UPDATE_PUBLIC_KEY }}
+      UPDATE_SIGNING_ENABLED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      MACOS_SIGNING_ENABLED: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - name: Validate release version
+        shell: bash
+        run: node packaging/version.mjs "$RELEASE_TAG"
+      - name: Linux baseline dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
+      - run: node scripts/prepare-vendor.mjs
+      - name: Rust acceptance checks
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --release --target "$TARGET" --locked -- -D warnings
+          cargo test --workspace --release --target "$TARGET" --locked
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        if: runner.os == 'Linux'
+      - name: Locked frontend
+        run: pnpm --dir apps/desktop install --frozen-lockfile
+      - name: Frontend and packaging acceptance
+        shell: bash
+        run: |
+          pnpm --dir apps/desktop format:check
+          pnpm --dir apps/desktop typecheck
+          pnpm --dir apps/desktop lint
+          pnpm --dir apps/desktop test
+          node --test packaging/tests/release.test.mjs
+      - name: Preserve dependency notices
+        shell: bash
+        run: |
+          cargo metadata --locked --format-version 1 > cargo-metadata.json
+          pnpm --dir apps/desktop licenses list --prod --json > frontend-licenses.json
+          node packaging/notices.mjs cargo-metadata.json frontend-licenses.json apps/desktop/src-tauri/third-party-notices
+      - name: Configure candidate
+        shell: bash
+        env:
+          UPDATE_SIGNING_ENABLED: "false"
+        run: node packaging/configure.mjs "$PLATFORM" .tools-release.json
+      - name: Compile application and companions without signing secrets
+        shell: bash
+        run: |
+          pnpm --dir apps/desktop exec tauri build --ci --no-bundle --target "$TARGET" --config "$GITHUB_WORKSPACE/packaging/$PLATFORM/tauri.json" --config "$GITHUB_WORKSPACE/.tools-release.json" -- --locked
+          cargo build --release --locked --target "$TARGET" -p okytes-cli -p okytes-daemon -p okytes-native-host
+      - name: Import Windows Authenticode certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./packaging/windows/import-signing.ps1
+      - name: Apply signing configuration
+        shell: bash
+        run: node packaging/configure.mjs "$PLATFORM" .tools-release.json
+      - name: Bundle and sign installers
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          pnpm --dir apps/desktop exec tauri bundle --ci --target "$TARGET" --config "$GITHUB_WORKSPACE/packaging/$PLATFORM/tauri.json" --config "$GITHUB_WORKSPACE/.tools-release.json"
+      - name: Remove imported Windows private signing key
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/windows/remove-signing.ps1
+      - name: Portable payload
+        shell: bash
+        run: |
+          node packaging/stage.mjs "target/$TARGET/release" portable "$TARGET"
+          mkdir -p "target/$TARGET/release/bundle/portable"
+          if [ "$PLATFORM" = linux ]; then
+            tar -czf "target/$TARGET/release/bundle/portable/Okytes-portable.tar.gz" -C portable .
+            node packaging/linux/create-run.mjs "target/$TARGET/release/bundle/portable/Okytes-portable.tar.gz" "target/$TARGET/release/bundle/portable/Okytes.run"
+            for binary in portable/bin/*; do
+              readelf --version-info "$binary" > glibc-requirements.txt
+              node packaging/linux/check-glibc.mjs glibc-requirements.txt
+            done
+          fi
+          if [ "$PLATFORM" = macos ]; then
+            tar -czf "target/$TARGET/release/bundle/portable/Okytes-tools.tar.gz" -C portable bin/okytes-cli bin/okytes-daemon bin/okytes-native-host LICENSE LICENSE-MIT LICENSE-APACHE INSTALLATION.md target.txt third-party-notices
+            app_bundle="target/$TARGET/release/bundle/macos"
+            if [ ! -f "$app_bundle/Okytes.app.tar.gz" ]; then
+              tar -czf "$app_bundle/Okytes.app.tar.gz" -C "$app_bundle" Okytes.app
+            fi
+          fi
+      - name: Windows portable archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path portable/* -DestinationPath "target/$env:TARGET/release/bundle/portable/Okytes-portable.zip"
+      - name: Exercise staged CLI recovery
+        shell: bash
+        run: |
+          export OKYTES_INSTALLED_CLI="$GITHUB_WORKSPACE/portable/bin/okytes-cli"
+          if [ "$PLATFORM" = windows ]; then export OKYTES_INSTALLED_CLI="$OKYTES_INSTALLED_CLI.exe"; fi
+          cargo test -p okytes-cli --test process --release --locked --target "$TARGET" forced_process_kill_resumes_identically_and_changed_etag_is_rejected
+      - name: Collect accurately labeled artifacts
+        shell: bash
+        # Installer lifecycle is unverified until a clean-environment acceptance run.
+        # Code signing is conservatively unsigned here; signed qualification is a separate gate.
+        run: |
+          signing=unsigned
+          if [ "$PLATFORM" = windows ] && [ -n "${WINDOWS_CERTIFICATE_THUMBPRINT:-}" ]; then signing=signing-unverified; fi
+          if [ "$PLATFORM" = macos ] && [ "$MACOS_SIGNING_ENABLED" = true ]; then signing=signing-unverified; fi
+          node packaging/collect.mjs "target/$TARGET/release/bundle" artifacts "$TARGET" "$signing"
+      - name: Windows installed desktop recovery
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build -p okytes-test-support --example desktop_fixture --release --target $env:TARGET --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:OKYTES_DESKTOP_FIXTURE = "$env:GITHUB_WORKSPACE/target/$env:TARGET/release/examples/desktop_fixture.exe"
+          $installer = Get-ChildItem "target/$env:TARGET/release/bundle/nsis/*.exe" | Select-Object -First 1
+          ./packaging/windows/test-install.ps1 -Installer $installer.FullName -Destination "$env:GITHUB_WORKSPACE/.tools/nsis-installed"
+      - name: Dependency inventory and audit
+        shell: bash
+        run: |
+          cargo metadata --locked --format-version 1 > cargo-metadata.json
+          node packaging/sbom.mjs cargo-metadata.json "artifacts/sbom-$TARGET.cdx.json"
+          cp apps/desktop/src-tauri/third-party-notices/frontend.cdx.json "artifacts/frontend-sbom-$TARGET.cdx.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ matrix.target }}
+          path: artifacts/
+          if-no-files-found: error
+  draft:
+    needs: build
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: candidate-*
+          merge-multiple: true
+          path: artifacts
+      - run: pnpm --dir apps/desktop install --frozen-lockfile
+      - name: Release notes, checksums and signed update metadata
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node packaging/release.mjs artifacts "$RELEASE_TAG"
+          node packaging/sign-release.mjs artifacts "$RELEASE_TAG" "$GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run
+          path: artifacts/
+      - name: Publish draft for human review
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$RELEASE_TAG" --verify-tag --draft --title "Okytes $RELEASE_TAG" --notes-file artifacts/release-notes.md artifacts/*

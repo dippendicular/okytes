@@ -9,14 +9,12 @@ import path from "node:path";
 const root = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const runtime = path.join(root, ".tools", "m2-native-e2e", String(Date.now()));
 mkdirSync(runtime, { recursive: true });
-const executable = path.join(root, "target", "debug", "okytes-desktop.exe");
-const fixtureExecutable = path.join(
-  root,
-  "target",
-  "debug",
-  "examples",
-  "desktop_fixture.exe",
-);
+const executable =
+  process.env.OKYTES_INSTALLED_DESKTOP ??
+  path.join(root, "target", "debug", "okytes-desktop.exe");
+const fixtureExecutable =
+  process.env.OKYTES_DESKTOP_FIXTURE ??
+  path.join(root, "target", "debug", "examples", "desktop_fixture.exe");
 const fixture = spawn(fixtureExecutable, [], { windowsHide: true });
 let app, browser;
 const report = {
@@ -42,6 +40,12 @@ async function start() {
     },
   });
   app.on("error", (error) => report.errors.push(String(error)));
+  app.stdout.on("data", (chunk) => {
+    report.appStdout = ((report.appStdout ?? "") + chunk).slice(-16384);
+  });
+  app.stderr.on("data", (chunk) => {
+    report.appStderr = ((report.appStderr ?? "") + chunk).slice(-16384);
+  });
   let connected;
   for (let attempt = 0; attempt < 80; attempt++) {
     try {
@@ -193,7 +197,7 @@ try {
   mark("native accessibility including contrast", "axe: zero violations");
   let dialog = await details(page, "first.zip");
   await expect(
-    dialog.getByText("HTTP response", { exact: true }),
+    dialog.getByText("Transfer response", { exact: true }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Download again" }).click();
   await dialog.getByRole("button", { name: "Close dialog" }).click();

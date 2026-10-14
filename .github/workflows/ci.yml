@@ -23,6 +23,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - name: Prepare patched torrent dependencies
         run: node scripts/prepare-vendor.mjs
+      - name: Packaging regression tests
+        run: node --test packaging/tests/release.test.mjs
       - name: Check generated bindings
         run: |
           cargo test -p okytes-core --lib --locked desktop::export_bindings
@@ -65,6 +67,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - uses: EmbarkStudios/cargo-deny-action@v2
+        if: runner.os == 'Linux'
   stress:
     runs-on: ubuntu-latest
     steps:
@@ -75,3 +78,8 @@ jobs:
           node-version: 24
       - run: node scripts/prepare-vendor.mjs
       - run: cargo test -p okytes-cli --test process --release --locked -- --ignored --nocapture
+  workflows:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://rhysd/actionlint:1.7.12

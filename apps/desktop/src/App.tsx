@@ -4,6 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { FileTransferForm, MediaForm } from "./Transfers";
 import { TorrentForm, TorrentDiagnostics } from "./Torrents";
 import { TrafficSettings, defaultTraffic } from "./TrafficSettings";
+import { Updates } from "./Updates";
 import {
   api,
   bytes,
@@ -943,6 +944,7 @@ export function App() {
             <button className="primary" disabled={busy}>
               Save settings
             </button>
+            <Updates />
           </form>
         )}
       </Modal>

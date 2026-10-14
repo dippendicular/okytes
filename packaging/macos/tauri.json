@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "public.app-category.utilities",
+    "macOS": { "minimumSystemVersion": "13.0" }
+  }
+}

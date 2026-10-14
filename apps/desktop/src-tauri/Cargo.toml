@@ -22,4 +22,15 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 okytes-browser-bridge = { version = "=0.1.0", path = "../../../crates/browser-bridge" }
+tauri-plugin-updater = "2"
+base64 = "0.22"
+minisign-verify = "0.3"
+semver = "1"
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 

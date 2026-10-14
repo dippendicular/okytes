@@ -24,7 +24,7 @@ exclude = ["vendor/librqbit", "vendor/librqbit-utp", "vendor/librqbit-dht", "ven
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/nicepkg/okytes"
+repository = "https://github.com/dippendicular/okytes"
 rust-version = "1.95"
 
 [workspace.dependencies]

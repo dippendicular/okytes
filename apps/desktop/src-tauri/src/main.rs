@@ -4,6 +4,7 @@ use okytes_desktop_service::{AppService, Session};
 use std::sync::Arc;
 use tauri::{Manager, State};
 use tauri_plugin_notification::NotificationExt;
+mod updates;
 
 type Service = Arc<dyn AppService>;
 #[tauri::command]
@@ -94,6 +95,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::Updates(tokio::sync::Mutex::new(None)))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![submit,inspect_media,authorize_file,
             list,
@@ -105,7 +108,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             pause_all,
             inspect_torrent,
             add_torrent,
-            torrent
+            torrent,
+            updates::check_update,
+            updates::download_update,
+            updates::install_update
         ])
         .setup(|app| {
             let directory = std::env::var_os("OKYTES_DATA_DIR").map(std::path::PathBuf::from).unwrap_or(app.path().app_data_dir()?);

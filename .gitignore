@@ -5,7 +5,12 @@
 AGENTS.md
 AGENTS.override.md
 
-# Local root scripts and dependency patches
+# Generated release staging
+/.tools-release.json
+/portable/
+/artifacts/
+/packaging/macos/generated-safari/
+/apps/desktop/src-tauri/third-party-notices/
 
 # Rust / Cargo
 /vendor/
@@ -67,6 +72,7 @@ browser-token.json
 *.provisionprofile
 *.asc
 *.sig
+!apps/desktop/src-tauri/tests/fixtures/*.sig
 !tests/fixtures/**/*.pem
 !tests/fixtures/**/*.key
 
