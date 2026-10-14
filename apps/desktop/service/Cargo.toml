@@ -8,6 +8,8 @@ license.workspace = true
 okytes-core.workspace = true
 okytes-persistence.workspace = true
 okytes-transport-http.workspace = true
+okytes-transport-ftp.workspace = true
+okytes-transport-media.workspace = true
 okytes-transport-torrent.workspace = true
 okytes-torrent-types.workspace = true
 tokio.workspace = true
@@ -18,6 +20,7 @@ tracing.workspace = true
 okytes-browser-bridge = { version = "=0.1.0", path = "../../../crates/browser-bridge" }
 
 [dev-dependencies]
+chrono.workspace = true
 tempfile.workspace = true
 okytes-test-support.workspace = true
 sha2.workspace = true

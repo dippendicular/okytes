@@ -1,0 +1,613 @@
+--- a/src/create_torrent_file.rs
++++ b/src/create_torrent_file.rs
+@@ -154,7 +154,7 @@
+         }
+     }
+ 
+-    if remaining_piece_length > 0 && length > 0 {
++    if remaining_piece_length > 0 && remaining_piece_length < piece_length {
+         piece_hashes.extend_from_slice(&piece_checksum.finish());
+     }
+     Ok(CreateTorrentRawResult {
+--- a/src/dht_utils.rs
++++ b/src/dht_utils.rs
+@@ -35,11 +35,12 @@
+     peer_connection_options: Option<PeerConnectionOptions>,
+     connector: Arc<StreamConnector>,
+     client_name_and_version: String,
++    peer_limit:usize,
+ ) -> ReadMetainfoResult<A> {
+     let mut seen = HashSet::<SocketAddr>::new();
+     let mut addrs = addrs_stream;
+ 
+-    let semaphore = tokio::sync::Semaphore::new(128);
++    let semaphore = tokio::sync::Semaphore::new(peer_limit.clamp(1,32));
+ 
+     let read_info_guarded = |addr| {
+         let semaphore = &semaphore;
+@@ -68,7 +69,7 @@
+ 
+     let mut unordered = FuturesUnordered::new();
+ 
+-    for a in initial_addrs {
++    for a in initial_addrs.into_iter().take(32) {
+         seen.insert(a);
+         unordered.push(read_info_guarded(a));
+     }
+@@ -76,6 +77,7 @@
+     let mut addrs_completed = false;
+ 
+     loop {
++        if seen.len()>=512 {addrs_completed=true;}
+         if addrs_completed && unordered.is_empty() {
+             return ReadMetainfoResult::ChannelClosed { seen };
+         }
+@@ -91,7 +93,7 @@
+                 }
+             }
+ 
+-            next_addr = addrs.next(), if !addrs_completed => {
++            next_addr = addrs.next(), if !addrs_completed && unordered.len()<32 => {
+                 match next_addr {
+                     Some(addr) => {
+                         if seen.insert(addr) {
+@@ -146,6 +148,7 @@
+             None,
+             Arc::new(StreamConnector::new(Default::default()).await.unwrap()),
+             crate::client_name_and_version().to_owned(),
++            16,
+         )
+         .await
+         {
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -4,6 +4,8 @@
+ 
+ #[derive(thiserror::Error, Debug)]
+ pub enum Error {
++    #[error("embedding payload gate: {0}")]
++    Embedding(anyhow::Error),
+     #[error("error connecting through proxy: {0:#}")]
+     SocksConnect(
+         #[from]
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -65,12 +65,14 @@
+ mod peer_info_reader;
+ mod piece_tracker;
+ mod read_buf;
++mod peer_shape;
+ mod session;
+ mod session_persistence;
+ pub mod session_stats;
+ pub mod spawn_utils;
+ 
+ pub mod storage;
++pub mod metainfo_guard;
+ mod stream_connect;
+ mod torrent_state;
+ #[cfg(feature = "tracing-subscriber-utils")]
+@@ -123,3 +125,6 @@
+ pub fn try_increase_nofile_limit() -> anyhow::Result<u64> {
+     Ok(rlimit::increase_nofile_limit(1024 * 1024)?)
+ }
++
++/// Upstream storage callback result; embedding APIs should keep their own typed errors.
++pub type StorageResult<T> = anyhow::Result<T>;
+--- a/src/limits.rs
++++ b/src/limits.rs
+@@ -53,7 +53,13 @@
+     }
+ }
+ 
++/// External admission shared with the embedding application's token buckets.
++pub trait PayloadGate: Send + Sync {
++    fn admit(&self, upload: bool, bytes: usize) -> futures::future::BoxFuture<'_, crate::Result<()>>;
++}
++
+ pub struct Limits {
++    gate: Option<Arc<dyn PayloadGate>>,
+     down: Limit,
+     up: Limit,
+ }
+@@ -61,16 +67,23 @@
+ impl Limits {
+     pub fn new(config: LimitsConfig) -> Self {
+         Self {
++            gate: None,
+             down: Limit::new(config.download_bps),
+             up: Limit::new(config.upload_bps),
+         }
+     }
+ 
++    /// Construct limits with an embedding payload gate installed before peers start.
++    pub fn with_gate(config: LimitsConfig, gate: Option<Arc<dyn PayloadGate>>) -> Self {
++        let mut limits = Self::new(config); limits.gate = gate; limits
++    }
+     pub async fn prepare_for_upload(&self, len: NonZeroU32) -> crate::Result<()> {
++        if let Some(gate) = &self.gate { gate.admit(true, len.get() as usize).await?; }
+         self.up.acquire(len).await
+     }
+ 
+     pub async fn prepare_for_download(&self, len: NonZeroU32) -> crate::Result<()> {
++        if let Some(gate) = &self.gate { gate.admit(false, len.get() as usize).await?; }
+         self.down.acquire(len).await
+     }
+ 
+--- a/src/metainfo_guard.rs
++++ b/src/metainfo_guard.rs
+@@ -0,0 +1,15 @@
++//! Optional embedding validation before a peer's info dictionary is parsed.
++type Guard = fn(&[u8]) -> anyhow::Result<()>;
++static GUARD: std::sync::OnceLock<Guard> = std::sync::OnceLock::new();
++/// Install one process-wide envelope policy before opening application sessions.
++pub fn install(guard: Guard) { let _ = GUARD.set(guard); }
++pub(crate) fn check_info(info: &[u8]) -> anyhow::Result<()> {
++    if let Some(guard) = GUARD.get() {
++        let mut envelope = Vec::with_capacity(info.len() + 8);
++        envelope.extend_from_slice(b"d4:info");
++        envelope.extend_from_slice(info);
++        envelope.push(b'e');
++        guard(&envelope)?;
++    }
++    Ok(())
++}
+--- a/src/peer_connection.rs
++++ b/src/peer_connection.rs
+@@ -116,7 +116,7 @@
+     write_buf: Box<[u8; MAX_MSG_LEN]>,
+     read: BoxAsyncReadVectored,
+     write: BoxAsyncWrite,
+-    outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
++    outgoing_chan: tokio::sync::mpsc::Receiver<WriterRequest>,
+     have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
+ }
+ 
+@@ -145,7 +145,7 @@
+     // read_buf should start with valuable data. The handshake should be removed from it.
+     pub async fn manage_peer_incoming(
+         &self,
+-        outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
++        outgoing_chan: tokio::sync::mpsc::Receiver<WriterRequest>,
+         mut incoming: CheckedIncomingConnection,
+         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
+     ) -> Result<()> {
+@@ -202,7 +202,7 @@
+ 
+     pub async fn manage_peer_outgoing(
+         &self,
+-        outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
++        outgoing_chan: tokio::sync::mpsc::Receiver<WriterRequest>,
+         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
+     ) -> Result<()> {
+         use tokio::io::AsyncWriteExt;
+--- a/src/peer_info_reader/mod.rs
++++ b/src/peer_info_reader/mod.rs
+@@ -19,7 +19,6 @@
+     },
+ };
+ use sha1w::{ISha1, Sha1};
+-use tokio::sync::mpsc::UnboundedSender;
+ use tracing::trace;
+ 
+ use crate::{
+@@ -42,7 +41,7 @@
+     let (result_tx, result_rx) = tokio::sync::oneshot::channel::<
+         Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned), bencode::DeserializeError>,
+     >();
+-    let (writer_tx, writer_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
++    let (writer_tx, writer_rx) = tokio::sync::mpsc::channel::<WriterRequest>(128);
+     let handler = Handler {
+         addr,
+         info_hash,
+@@ -84,7 +83,7 @@
+ 
+ impl HandlerLocked {
+     fn new(metadata_size: u32) -> anyhow::Result<Self> {
+-        if metadata_size > 32 * 1024 * 1024 {
++        if metadata_size > 512 * 1024 {
+             anyhow::bail!("metadata size {} is too big", metadata_size);
+         }
+         let buffer = vec![0u8; metadata_size as usize];
+@@ -152,7 +151,7 @@
+ struct Handler {
+     addr: SocketAddr,
+     info_hash: Id20,
+-    writer_tx: UnboundedSender<WriterRequest>,
++    writer_tx: tokio::sync::mpsc::Sender<WriterRequest>,
+     result_tx: Mutex<
+         Option<
+             tokio::sync::oneshot::Sender<Result<TorrentAndInfoBytes, bencode::DeserializeError>>,
+@@ -192,6 +191,7 @@
+                 .record_piece(&utdata, &self.info_hash)?;
+             if piece_ready {
+                 let buf = Bytes::from(self.locked.write().take().unwrap().buffer);
++                crate::metainfo_guard::check_info(&buf)?;
+                 let info = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&buf)
+                     .map(|i| {
+                         use clone_to_owned::CloneToOwned;
+@@ -236,9 +236,9 @@
+         }
+ 
+         self.writer_tx
+-            .send(WriterRequest::Message(Message::Unchoke))?;
++            .try_send(WriterRequest::Message(Message::Unchoke))?;
+         self.writer_tx
+-            .send(WriterRequest::Message(Message::Interested))?;
++            .try_send(WriterRequest::Message(Message::Interested))?;
+ 
+         let inner = HandlerLocked::new(metadata_size)?;
+         let total_pieces = inner.total_pieces;
+@@ -247,7 +247,7 @@
+ 
+         for i in 0..total_pieces {
+             self.writer_tx
+-                .send(WriterRequest::Message(Message::Extended(
++                .try_send(WriterRequest::Message(Message::Extended(
+                     ExtendedMessage::UtMetadata(UtMetadata::Request(i.try_into()?)),
+                 )))?;
+         }
+--- a/src/peer_shape.rs
++++ b/src/peer_shape.rs
+@@ -0,0 +1,13 @@
++//! Bounded input preflight before deserializing untrusted bencode.
++pub(crate) fn valid_prefix(bytes:&[u8])->bool {
++    fn value(bytes:&[u8],at:&mut usize,depth:usize,nodes:&mut usize)->Option<()> {
++        if depth>16 || *nodes>=16384{return None;}*nodes+=1;
++        match *bytes.get(*at)? {
++            b'l'|b'd'=>{*at+=1;while *bytes.get(*at)?!=b'e'{value(bytes,at,depth+1,nodes)?;}*at+=1;}
++            b'i'=>{*at+=1;let start=*at;while *bytes.get(*at)?!=b'e'{*at+=1;if *at-start>21{return None;}}*at+=1;}
++            b'0'..=b'9'=>{let mut len=0usize;while bytes.get(*at).is_some_and(|b|b.is_ascii_digit()){len=len.checked_mul(10)?.checked_add((*bytes.get(*at)?-b'0') as usize)?;*at+=1;}if *bytes.get(*at)?!=b':'{return None;}*at=at.checked_add(1)?.checked_add(len)?;if len>4096 || *at>bytes.len(){return None;}}
++            _=>return None,
++        }Some(())
++    }
++    let mut at=0;value(bytes,&mut at,0,&mut 0).is_some()
++}
+--- a/src/read_buf.rs
++++ b/src/read_buf.rs
+@@ -144,6 +144,21 @@
+         timeout: Duration,
+     ) -> Result<Message<'_>> {
+         loop {
++            let needs_contiguous={
++                let (first,second)=as_slices!(self);
++                let mut header=[0u8;6];
++                for (slot,byte) in header.iter_mut().zip(first.iter().chain(second.iter())){*slot=*byte;}
++                if first.len()+second.len()>=6 && header[4]==20 {
++                    let length=u32::from_be_bytes([header[0],header[1],header[2],header[3]]) as usize;
++                    if length>=2 && length<=BUFLEN-4 && first.len()+second.len()>=length+4 {
++                        if first.len()<length+4 {true} else {
++                            if !crate::peer_shape::valid_prefix(&first[6..length+4]) {return Err(Error::Embedding(anyhow::anyhow!("excessive or malformed peer extension bencode")));}
++                            false
++                        }
++                    } else {false}
++                } else {false}
++            };
++            if needs_contiguous {self.make_contiguous()?;continue;}
+             let err = {
+                 // A workaround for borrow-checker not understanding early returns.
+                 //
+--- a/src/session.rs
++++ b/src/session.rs
+@@ -242,6 +242,12 @@
+ // Serialize/deserialize is for Tauri.
+ #[derive(Default, Serialize, Deserialize)]
+ pub struct AddTorrentOptions {
++    /// Application admission callback; never serialized or supplied by peer input.
++    #[serde(skip)]
++    pub payload_gate: Option<Arc<dyn crate::limits::PayloadGate>>,
++    /// Disable sending and consuming peer-exchange messages.
++    #[serde(default)]
++    pub disable_pex: bool,
+     /// Start in paused state.
+     #[serde(default)]
+     pub paused: bool,
+@@ -1072,6 +1078,7 @@
+         self.cancellation_token.cancel();
+         // this sucks, but hopefully will be enough
+         tokio::time::sleep(Duration::from_secs(1)).await;
++        self.db.write().torrents.clear();
+     }
+ 
+     /// Run a callback given the currently managed torrents.
+@@ -1353,6 +1360,8 @@
+                     allow_overwrite: opts.overwrite,
+                     output_folder,
+                     ratelimits: opts.ratelimits,
++                    payload_gate: opts.payload_gate,
++                    disable_pex: opts.disable_pex,
+                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
+                     peer_limit: opts.peer_limit.or(self.peer_limit),
+                     #[cfg(feature = "disable-upload")]
+@@ -1647,6 +1656,7 @@
+             Some(self.merge_peer_opts(peer_opts)),
+             self.connector.clone(),
+             self.client_name_and_version.clone(),
++            self.peer_limit.unwrap_or(16).clamp(1,32),
+         )
+         .await
+         {
+--- a/src/storage/filesystem/mod.rs
++++ b/src/storage/filesystem/mod.rs
+@@ -4,3 +4,6 @@
+ 
+ pub use fs::{FilesystemStorage, FilesystemStorageFactory};
+ pub use opened_file::OurFileExt;
++
++#[cfg(windows)]
++pub use sparse::mark_file_sparse;
+--- a/src/storage/filesystem/sparse.rs
++++ b/src/storage/filesystem/sparse.rs
+@@ -8,5 +8,7 @@
+ 
+     let handle = HANDLE(f.as_raw_handle());
+ 
++    // SAFETY: the borrowed File keeps this handle valid; this control takes no
++    // input/output buffers and all corresponding pointers and lengths are null.
+     unsafe { DeviceIoControl(handle, FSCTL_SET_SPARSE, None, 0, None, 0, None, None).is_ok() }
+ }
+--- a/src/torrent_state/live/mod.rs
++++ b/src/torrent_state/live/mod.rs
+@@ -78,7 +78,7 @@
+ };
+ use tokio::sync::{
+     Notify, OwnedSemaphorePermit, Semaphore,
+-    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
++    
+ };
+ use tokio_util::sync::CancellationToken;
+ use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
+@@ -195,7 +195,7 @@
+     peer_semaphore: Arc<Semaphore>,
+ 
+     // The queue for peer manager to connect to them.
+-    peer_queue_tx: UnboundedSender<SocketAddr>,
++    peer_queue_tx: tokio::sync::mpsc::Sender<SocketAddr>,
+ 
+     finished_notify: Notify,
+     new_pieces_notify: Notify,
+@@ -209,8 +209,8 @@
+     pub(crate) streams: Arc<TorrentStreams>,
+     have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
+ 
+-    ratelimit_upload_tx: tokio::sync::mpsc::UnboundedSender<(
+-        tokio::sync::mpsc::UnboundedSender<WriterRequest>,
++    ratelimit_upload_tx: tokio::sync::mpsc::Sender<(
++        tokio::sync::mpsc::Sender<WriterRequest>,
+         ChunkInfo,
+     )>,
+     ratelimits: Limits,
+@@ -222,7 +222,7 @@
+         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
+         cancellation_token: CancellationToken,
+     ) -> anyhow::Result<Arc<Self>> {
+-        let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
++        let (peer_queue_tx, peer_queue_rx) = tokio::sync::mpsc::channel(1024);
+         let session = paused
+             .shared
+             .session
+@@ -251,11 +251,11 @@
+ 
+         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
+ 
+-        let (ratelimit_upload_tx, ratelimit_upload_rx) = tokio::sync::mpsc::unbounded_channel::<(
+-            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
++        let (ratelimit_upload_tx, ratelimit_upload_rx) = tokio::sync::mpsc::channel::<(
++            tokio::sync::mpsc::Sender<WriterRequest>,
+             ChunkInfo,
+-        )>();
+-        let ratelimits = Limits::new(paused.shared.options.ratelimits);
++        )>(512);
++        let ratelimits = Limits::with_gate(paused.shared.options.ratelimits, paused.shared.options.payload_gate.clone());
+ 
+         let state = Arc::new(TorrentStateLive {
+             shared: paused.shared.clone(),
+@@ -364,7 +364,8 @@
+         checked_peer: CheckedIncomingConnection,
+     ) -> anyhow::Result<AddIncomingPeerResult> {
+         use dashmap::mapref::entry::Entry;
+-        let (tx, rx) = unbounded_channel();
++        if self.peers.states.len() >= 512 && !self.peers.states.contains_key(&checked_peer.addr) { return Ok(AddIncomingPeerResult::ConcurrencyLimitReached); }
++        let (tx, rx) = tokio::sync::mpsc::channel(128);
+         let permit = match self.peer_semaphore.clone().try_acquire_owned() {
+             Ok(permit) => permit,
+             Err(_) => {
+@@ -434,8 +435,8 @@
+ 
+     async fn task_upload_scheduler(
+         self: Arc<Self>,
+-        mut rx: tokio::sync::mpsc::UnboundedReceiver<(
+-            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
++        mut rx: tokio::sync::mpsc::Receiver<(
++            tokio::sync::mpsc::Sender<WriterRequest>,
+             ChunkInfo,
+         )>,
+     ) -> crate::Result<()> {
+@@ -458,7 +459,7 @@
+                     }
+                 }
+             }
+-            let _ = tx.send(WriterRequest::ReadChunkRequest(ci));
++            let _ = tx.try_send(WriterRequest::ReadChunkRequest(ci));
+         }
+         Ok(())
+     }
+@@ -599,7 +600,7 @@
+ 
+     async fn task_peer_adder(
+         self: Arc<Self>,
+-        mut peer_queue_rx: UnboundedReceiver<SocketAddr>,
++        mut peer_queue_rx: tokio::sync::mpsc::Receiver<SocketAddr>,
+     ) -> crate::Result<()> {
+         let state = self;
+         loop {
+@@ -726,7 +727,7 @@
+         };
+ 
+         self.peer_queue_tx
+-            .send(addr)
++            .try_send(addr)
+             .ok()
+             .ok_or(Error::TorrentIsNotLive)?;
+         Ok(true)
+@@ -892,7 +893,7 @@
+                     .take_live_no_counters()
+                     .unwrap()
+                     .tx
+-                    .send(WriterRequest::Disconnect(Ok(())));
++                    .try_send(WriterRequest::Disconnect(Ok(())));
+             }
+         }
+     }
+@@ -902,7 +903,7 @@
+             .states
+             .iter_mut()
+             .filter_map(|mut p| p.value_mut().reconnect_not_needed_peer(&self.peers))
+-            .map(|socket_addr| self.peer_queue_tx.send(socket_addr))
++            .map(|socket_addr| self.peer_queue_tx.try_send(socket_addr))
+             .take_while(|r| r.is_ok())
+             .last();
+     }
+@@ -979,7 +980,7 @@
+                     connected.iter().copied(),
+                     dropped.iter().copied(),
+                 );
+-                if tx.send(WriterRequest::UtPex(pex_msg)).is_err() {
++                if tx.try_send(WriterRequest::UtPex(pex_msg)).is_err() {
+                     return Ok(()); // Peer disconnected
+                 }
+ 
+@@ -1098,7 +1099,7 @@
+                 }
+             }
+             Message::Extended(ExtendedMessage::UtPex(pex)) => {
+-                if self.state.metadata.info.info().private {
++                if self.state.metadata.info.info().private || self.state.shared.options.disable_pex {
+                     warn!(
+                         id = self.state.shared.id,
+                         info_hash = ?self.state.shared.info_hash,
+@@ -1176,7 +1177,7 @@
+             }
+         }
+ 
+-        if !self.state.metadata.info.info().private && hs.m.ut_pex.is_some() {
++        if !self.state.metadata.info.info().private && !self.state.shared.options.disable_pex && hs.m.ut_pex.is_some() {
+             spawn_with_cancel(
+                 debug_span!(
+                     parent: self.state.shared.span.clone(),
+@@ -1394,7 +1395,7 @@
+                     if should_requeue {
+                         self.state
+                             .peer_queue_tx
+-                            .send(handle)
++                            .try_send(handle)
+                             .ok()
+                             .ok_or(Error::TorrentIsNotLive)?;
+                     }
+@@ -1516,7 +1517,7 @@
+ 
+         self.state
+             .ratelimit_upload_tx
+-            .send((self.tx.clone(), chunk_info))?;
++            .try_send((self.tx.clone(), chunk_info))?;
+         Ok(())
+     }
+ 
+@@ -1619,7 +1620,7 @@
+             let mut current = false;
+             move |h: &PeerHandler, new_value: bool| -> crate::Result<()> {
+                 if new_value != current {
+-                    h.tx.send(if new_value {
++                    h.tx.try_send(if new_value {
+                         WriterRequest::Message(Message::Interested)
+                     } else {
+                         WriterRequest::Message(Message::NotInterested)
+@@ -1647,7 +1648,7 @@
+                 {
+                     debug!("nothing left to do, neither of us is interested, disconnecting peer");
+                     self.tx
+-                        .send(WriterRequest::Disconnect(Ok(())))
++                        .try_send(WriterRequest::Disconnect(Ok(())))
+                         .ok()
+                         .ok_or(Error::PeerTaskDead)?;
+                     // wait until the receiver gets the message so that it doesn't finish with an error.
+@@ -1736,7 +1737,7 @@
+ 
+                 if self
+                     .tx
+-                    .send(WriterRequest::Message(Message::Request(request)))
++                    .try_send(WriterRequest::Message(Message::Request(request)))
+                     .is_err()
+                 {
+                     return Ok(());
+@@ -2014,7 +2015,7 @@
+         let data = data.slice(offset as usize..end as usize);
+ 
+         self.tx
+-            .send(WriterRequest::UtMetadata(UtMetadata::Data(
++            .try_send(WriterRequest::UtMetadata(UtMetadata::Data(
+                 UtMetadataData::from_bytes(piece_id, total_size, data.into()),
+             )))
+             .context("error sending UtMetadata: channel closed")?;
+--- a/src/torrent_state/live/peer/mod.rs
++++ b/src/torrent_state/live/peer/mod.rs
+@@ -10,7 +10,6 @@
+ 
+ use tokio::sync::{
+     Notify,
+-    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+ };
+ use tracing::debug;
+ 
+@@ -21,8 +20,8 @@
+ use super::PeerStates;
+ 
+ pub(crate) type InflightRequest = ChunkInfo;
+-pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
+-pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
++pub(crate) type PeerRx = tokio::sync::mpsc::Receiver<WriterRequest>;
++pub(crate) type PeerTx = tokio::sync::mpsc::Sender<WriterRequest>;
+ 
+ #[derive(Debug)]
+ pub(crate) struct Peer {
+@@ -191,7 +190,7 @@
+     pub fn idle_to_connecting(&mut self, counters: &PeerStates) -> Option<(PeerRx, PeerTx)> {
+         match &self.state {
+             PeerState::Queued | PeerState::NotNeeded => {
+-                let (tx, rx) = unbounded_channel();
++                let (tx, rx) = tokio::sync::mpsc::channel(128);
+                 let tx_2 = tx.clone();
+                 self.set_state(PeerState::Connecting(tx), counters);
+                 Some((rx, tx_2))
+--- a/src/torrent_state/live/peers/mod.rs
++++ b/src/torrent_state/live/peers/mod.rs
+@@ -39,6 +39,7 @@
+     }
+ 
+     pub fn add_if_not_seen(&self, addr: SocketAddr) -> Option<PeerHandle> {
++        if self.states.len() >= 512 && !self.states.contains_key(&addr) { return None; }
+         use dashmap::mapref::entry::Entry;
+         match self.states.entry(addr) {
+             Entry::Occupied(_) => None,
+--- a/src/torrent_state/mod.rs
++++ b/src/torrent_state/mod.rs
+@@ -109,6 +109,8 @@
+ 
+ #[derive(Default)]
+ pub(crate) struct ManagedTorrentOptions {
++    pub payload_gate: Option<Arc<dyn crate::limits::PayloadGate>>,
++    pub disable_pex: bool,
+     pub force_tracker_interval: Option<Duration>,
+     pub peer_connect_timeout: Option<Duration>,
+     pub peer_read_write_timeout: Option<Duration>,
+@@ -253,6 +255,10 @@
+         self.locked.read().only_files.clone()
+     }
+ 
++    /// Snapshot the maintained verifier's bitmap without exposing piece scheduling.
++    pub fn verified_pieces(&self) -> anyhow::Result<Vec<bool>> {
++        self.with_chunk_tracker(|tracker| tracker.get_have_pieces().as_slice().iter().by_vals().collect())
++    }
+     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
+         f(&self.locked.read().state)
+     }

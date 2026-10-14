@@ -114,7 +114,7 @@ pub enum ConflictStrategy {
 }
 
 /// Parameters for creating a new download job.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DownloadRequest {
     /// The URL to download from.
     pub url: Url,
@@ -134,6 +134,18 @@ pub struct DownloadRequest {
     /// Optional priority (higher = sooner). Default is 0.
     #[serde(default)]
     pub priority: i32,
+}
+
+impl std::fmt::Debug for DownloadRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DownloadRequest")
+            .field("url", &self.url)
+            .field("output_dir", &self.output_dir)
+            .field("filename", &self.filename)
+            .field("headers", &"<redacted>")
+            .field("priority", &self.priority)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Persistent metadata for a download job.
@@ -382,5 +394,24 @@ mod tests {
         config.max_concurrent_jobs = 1;
         config.channel_capacity = usize::MAX;
         assert!(config.validate().is_err());
+    }
+    #[test]
+    fn file_credentials_and_request_headers_are_redacted_from_debug() {
+        let credentials = crate::desktop::FileCredentials {
+            username: "user".into(),
+            password: "do-not-log-this-password".into(),
+            confirmed_host_key: None,
+        };
+        assert!(!format!("{credentials:?}").contains("do-not-log"));
+        let request = DownloadRequest {
+            url: Url::parse("sftp://example.test/file.bin").unwrap(),
+            output_dir: PathBuf::from("downloads"),
+            filename: None,
+            expected_hash: None,
+            conflict_strategy: ConflictStrategy::Fail,
+            headers: credentials.into_headers(),
+            priority: 0,
+        };
+        assert!(!format!("{request:?}").contains("do-not-log"));
     }
 }

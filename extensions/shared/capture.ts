@@ -5,6 +5,14 @@ import type { Response } from "./generated/Response";
 import { shouldCapture, type Rules, validUrl } from "./rules";
 
 export const HOST = "org.okytes.bridge";
+// Explicit media capture preserves the original HTTP origin for session handoff.
+export function mediaSource(url: string): string {
+  if (!validUrl(url)) throw new Error("Use an HTTP/HTTPS manifest URL");
+  const path = new URL(url).pathname.toLowerCase();
+  if (path.endsWith(".m3u8")) return `hls+${url}`;
+  if (path.endsWith(".mpd")) return `dash+${url}`;
+  throw new Error("Choose a .m3u8 or .mpd manifest");
+}
 // Each request has a bounded lifetime; the MV3 worker can reconnect on the next
 // user/browser event. The extension never receives the desktop handshake token.
 export function nativeRequest(
@@ -61,7 +69,7 @@ export async function handoff(
   api: Browser,
   capture: Capture,
 ): Promise<Response> {
-  if (!validUrl(capture.url))
+  if (!validUrl(capture.url.replace(/^(hls|dash)\+/, "")))
     throw new Error("Use an HTTP or HTTPS link without embedded credentials");
   return nativeRequest(api, {
     version: 1,

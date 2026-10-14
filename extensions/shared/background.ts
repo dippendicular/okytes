@@ -1,6 +1,6 @@
 import { api, type Tab } from "./compat";
 import { defaults, normalizeRules, validUrl, type Rules } from "./rules";
-import { handoff, intercept, nativeRequest } from "./capture";
+import { handoff, intercept, nativeRequest, mediaSource } from "./capture";
 import { ownPage } from "./messages";
 
 // Sensitive state is bounded memory only. Worker suspension deliberately loses
@@ -135,6 +135,7 @@ async function collect(tab: Tab): Promise<string[]> {
 }
 async function captureUrls(
   urls: string[],
+  media = false,
 ): Promise<{ accepted: number; failed: number }> {
   if (!urls.length || urls.length > 100 || urls.some((url) => !validUrl(url)))
     throw new Error("Use 1–100 HTTP/HTTPS links");
@@ -143,7 +144,7 @@ async function captureUrls(
   for (const url of urls) {
     try {
       const response = await handoff(api, {
-        url,
+        url: media ? mediaSource(url) : url,
         filename: null,
         sha256: null,
         headers: await sessionHeaders(url),
@@ -179,11 +180,11 @@ async function message(value: unknown, tab?: Tab): Promise<unknown> {
       operation: { kind: "Ping" },
     });
   if (
-    input.kind === "capture" &&
+    (input.kind === "capture" || input.kind === "capture_media") &&
     Array.isArray(input.urls) &&
     input.urls.every((url) => typeof url === "string")
   )
-    return captureUrls(input.urls);
+    return captureUrls(input.urls, input.kind === "capture_media");
   const active = (
     await api.tabs.query({ active: true, currentWindow: true })
   )[0];

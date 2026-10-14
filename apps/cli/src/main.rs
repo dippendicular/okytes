@@ -35,6 +35,10 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// List supported VOD video, audio and subtitle selections.
+    MediaInspect {
+        url: String,
+    },
     /// Add a magnet or .torrent. JSON options configure selection, privacy and seeding.
     Torrent {
         source: String,
@@ -52,6 +56,9 @@ enum Command {
     /// Add a job; use --run to download it immediately in this foreground process.
     Add {
         url: String,
+        /// Private JSON login file; credentials are never copied to the profile.
+        #[arg(long)]
+        credentials: Option<PathBuf>,
         #[arg(short, long)]
         output: Option<PathBuf>,
         #[arg(long)]
@@ -76,6 +83,8 @@ enum Command {
     },
     Resume {
         id: Uuid,
+        #[arg(long)]
+        credentials: Option<PathBuf>,
         #[arg(long)]
         run: bool,
     },
@@ -147,7 +156,15 @@ async fn execute(args: Args) -> Result<()> {
     validate(&config)?;
     let engine = Arc::new(Engine::new(
         config.clone(),
-        Arc::new(HttpTransport::new(&config)?),
+        Arc::new(okytes_transport_ftp::router::Router {
+            files: Arc::new(okytes_transport_ftp::FileTransport::new(
+                &config,
+                args.db.with_extension("known_hosts"),
+            )?),
+            fallback: okytes_transport_media::MediaTransport::new(Arc::new(HttpTransport::new(
+                &config,
+            )?)),
+        }),
         store.clone(),
         Arc::new(okytes_persistence::files::LocalFiles),
     )?);
@@ -160,6 +177,11 @@ async fn execute(args: Args) -> Result<()> {
         engine.event_sender(),
     )?;
     match args.command {
+        Command::MediaInspect { url } => {
+            let media =
+                okytes_transport_media::MediaTransport::new(Arc::new(HttpTransport::new(&config)?));
+            print(media.inspect(&url).await?, args.json)?;
+        }
         Command::Torrent {
             source,
             output,
@@ -178,6 +200,7 @@ async fn execute(args: Args) -> Result<()> {
         }
         Command::TorrentStatus { id } => print(torrent.torrent(id.to_string()).await?, args.json)?,
         Command::Add {
+            credentials,
             url,
             output,
             filename,
@@ -185,7 +208,12 @@ async fn execute(args: Args) -> Result<()> {
             run,
             conflict,
         } => {
-            let url = url.parse()?;
+            let credentials = credentials.map(read_credentials).transpose()?;
+            let url: url::Url = url.parse()?;
+            if credentials.is_some() && !matches!(url.scheme(), "ftp" | "ftps" | "sftp") {
+                bail!("file credentials require a file-protocol URL");
+            }
+            let headers = credentials.map(|c| c.into_headers()).unwrap_or_default();
             let id = engine
                 .add(DownloadRequest {
                     url,
@@ -197,7 +225,7 @@ async fn execute(args: Args) -> Result<()> {
                         "overwrite" => ConflictStrategy::Overwrite,
                         _ => ConflictStrategy::Rename,
                     },
-                    headers: vec![],
+                    headers,
                     priority: 0,
                 })
                 .await?;
@@ -219,7 +247,14 @@ async fn execute(args: Args) -> Result<()> {
             }
             print(engine.status(id).await?, args.json)?;
         }
-        Command::Resume { id, run } => {
+        Command::Resume {
+            id,
+            run,
+            credentials,
+        } => {
+            if let Some(path) = credentials {
+                engine.authorize_file(id, read_credentials(path)?).await?;
+            }
             if engine.status(id).await?.protocol == "torrent" {
                 torrent.resume(id).await?;
             } else {
@@ -238,7 +273,7 @@ async fn execute(args: Args) -> Result<()> {
             } else {
                 engine.cancel(id).await?;
             }
-            if engine.status(id).await?.protocol == "http" {
+            if engine.status(id).await?.protocol != "torrent" {
                 if let Ok(_lease) = SqliteStore::acquire_engine(&args.db) {
                     execute_job(&engine, &torrent, id).await?;
                 }
@@ -347,6 +382,7 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
     use okytes_core::desktop::{Action, DesktopService, Submit};
     use reqwest::Method;
     match args.command {
+        Command::MediaInspect { url } => print(client.inspect_media(url).await?, args.json)?,
         Command::Torrent {
             source,
             output,
@@ -364,6 +400,7 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
         }
         Command::TorrentStatus { id } => print(client.torrent(id.to_string()).await?, args.json)?,
         Command::Add {
+            credentials,
             url,
             output,
             filename,
@@ -383,6 +420,7 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
                 .map(|p| p.to_string_lossy().into_owned());
             let id = client
                 .submit(Submit {
+                    credentials: credentials.map(read_credentials).transpose()?,
                     url,
                     destination,
                     filename,
@@ -411,7 +449,16 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
             client.control(id.to_string(), Action::Pause).await?;
             print(remote_record(&client, id).await?, args.json)?;
         }
-        Command::Resume { id, run } => {
+        Command::Resume {
+            id,
+            run,
+            credentials,
+        } => {
+            if let Some(path) = credentials {
+                client
+                    .authorize_file(id.to_string(), read_credentials(path)?)
+                    .await?;
+            }
             client.control(id.to_string(), Action::Resume).await?;
             print(
                 if run {
@@ -539,4 +586,12 @@ fn read_bounded(path: &std::path::Path, limit: u64) -> Result<Vec<u8>> {
         bail!("torrent input exceeds its size limit");
     }
     Ok(bytes)
+}
+
+fn read_credentials(path: PathBuf) -> Result<okytes_core::desktop::FileCredentials> {
+    let bytes = read_bounded(&path, 32768)?;
+    if bytes.len() > 32768 {
+        bail!("credential file exceeds size bound");
+    }
+    Ok(serde_json::from_slice(&bytes)?)
 }

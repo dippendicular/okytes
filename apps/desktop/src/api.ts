@@ -6,6 +6,25 @@ import type { Settings } from "../../../crates/core/bindings/Settings";
 import type { Snapshot } from "../../../crates/core/bindings/Snapshot";
 export type { Action, AddInput, Job, Settings, Snapshot };
 export const api = {
+  inspectMedia: (url: string) =>
+    invoke<import("../../../crates/core/bindings/MediaChoice").MediaChoice[]>(
+      "inspect_media",
+      { url },
+    ),
+  submit: (input: {
+    url: string;
+    destination: string | null;
+    filename: string | null;
+    sha256: string | null;
+    conflict: string;
+    credentials:
+      | import("../../../crates/core/bindings/FileCredentials").FileCredentials
+      | null;
+  }) => invoke<string>("submit", { input }),
+  authorizeFile: (
+    id: string,
+    credentials: import("../../../crates/core/bindings/FileCredentials").FileCredentials,
+  ) => invoke<void>("authorize_file", { id, credentials }),
   inspectTorrent: (
     input: import("../../../crates/torrent-types/bindings/Input").Input,
   ) =>

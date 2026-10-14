@@ -100,6 +100,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/jobs/{id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["authorize_file"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["inspect_media"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/openapi.json": {
         parameters: {
             query?: never;
@@ -335,7 +367,7 @@ export interface components {
             ][];
             /** @description Optional publisher hash, useful for automated integrity checks. */
             sha256?: string | null;
-            /** @description HTTP(S) source URL without userinfo. */
+            /** @description HTTP(S), or an explicitly selected hls+/dash+ source URL, without userinfo. */
             url: string;
         };
         /**
@@ -463,6 +495,15 @@ export interface components {
                 /** Format: uuid */
                 job_id: string;
             };
+        };
+        /** @description Memory-only file login and an optional explicitly confirmed SSH fingerprint. */
+        FileCredentials: {
+            /** @description Exact SHA256 fingerprint the user has verified and confirmed. */
+            confirmed_host_key?: string | null;
+            /** @description Password, retained only for this process session. */
+            password: string;
+            /** @description Remote account name. */
+            username: string;
         };
         /** @description Administration request. The maximum permitted lifetime is 90 days. */
         IssueToken: {
@@ -626,6 +667,19 @@ export interface components {
          * @enum {string}
          */
         JobState: "Queued" | "Probing" | "Downloading" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Verifying";
+        /** @description A manifest-advertised quality, audio or subtitle selection. */
+        MediaChoice: {
+            /** @description Suggested output extension for the supported assembly path. */
+            extension: string;
+            /** @description Stable selection identifier. */
+            id: string;
+            /** @description video, audio or subtitles. */
+            kind: string;
+            /** @description Quality, language and codec details reported by the manifest. */
+            label: string;
+            /** @description Explicit media source URL for this selection. */
+            url: string;
+        };
         /** @description Operations available to browser clients. No arbitrary queue/admin access. */
         Operation: {
             /** @enum {string} */
@@ -771,13 +825,14 @@ export interface components {
         Submit: {
             /** @description rename, fail or overwrite. */
             conflict: string;
+            credentials?: null | components["schemas"]["FileCredentials"];
             /** @description Absolute override; null uses service preferences. */
             destination?: string | null;
             /** @description Optional safe basename. */
             filename?: string | null;
             /** @description Optional publisher SHA-256. */
             sha256?: string | null;
-            /** @description HTTP(S) URL without userinfo. */
+            /** @description Supported transfer URL without userinfo. */
             url: string;
         };
         /** @description Public token metadata; contains no token or stored digest. */
@@ -1578,6 +1633,160 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    authorize_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileCredentials"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    inspect_media: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "text/plain": string;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaChoice"][];
                 };
             };
             /** @description Invalid input */

@@ -243,11 +243,13 @@ Different protocols need different transfer strategies. Okytes keeps protocol-sp
 |---|---|
 | **HTTP/HTTPS** | Byte-range transfers, redirects, TLS validation, adaptive concurrency, validator-aware resume |
 | **BitTorrent / Magnet** | Peer discovery, DHT, trackers, selective files, piece verification, seeding controls |
-| **FTP / FTPS / SFTP** | Remote browsing, uploads, downloads, authentication, resumable operations |
-| **HLS / DASH** | Manifest parsing, segment downloads, media selection, non-DRM streams |
+| **FTP / FTPS / SFTP** | Resumable downloads, memory-only login, strict SFTP host-key verification |
+| **HLS / DASH** | VOD quality/audio selection, AES-128 HLS, durable segment assembly and WebVTT sidecars |
 | **LAN Share** | Device discovery, pairing, receiver approval, encrypted direct transfers |
 
-SFTP runs over SSH. FTPS uses FTP secured with TLS. Their authentication and transfer behavior are handled independently.
+SFTP runs over SSH. FTPS uses FTP secured with TLS. Their authentication and transfer behavior are handled independently. FTP and explicit FTPS use passive transfers and REST offsets; SFTP uses file offsets. Resumes check the remote size and modification time. Unknown SSH keys require a verified fingerprint confirmation, and changed keys are refused.
+
+HLS and static, single-period DASH downloads preserve source segments in MPEG-TS or fragmented MP4. Video, audio and subtitle selections produce separate files. WebVTT sidecars preserve absolute cue timestamps. Standard AES-128 HLS keys are supported when the authorized manifest supplies them. DRM, live streams, timestamp-mapped subtitles and layouts requiring remuxing are refused.
 
 ## Security and privacy
 
@@ -311,3 +313,5 @@ Okytes is dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT)
 **Own your downloads. Trust the result.**
 
 *Okytes Download Manager*
+
+For a source build, first run `node scripts/prepare-vendor.mjs`. This restores the checksum-pinned torrent dependency patches into the ignored `vendor/` directory.

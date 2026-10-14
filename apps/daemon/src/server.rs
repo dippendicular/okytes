@@ -282,6 +282,8 @@ pub fn router(api: Arc<Api>) -> Router {
         .route("/v1/jobs/{id}", get(job))
         .route("/v1/jobs/{id}/control", post(control))
         .route("/v1/submit", post(submit))
+        .route("/v1/media/inspect", post(inspect_media))
+        .route("/v1/jobs/{id}/credentials", post(authorize_file))
         .route("/v1/records", get(records))
         .route("/v1/records/{id}", get(record))
         .route("/v1/config", get(config).put(set_config))
@@ -492,7 +494,7 @@ async fn spec() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi())
 }
 #[derive(OpenApi)]
-#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,records,record,config,set_config,add_torrent,inspect_torrent,torrent),components(schemas(Update,ApiError)),modifiers(&Security))]
+#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(inspect_media,authorize_file,list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,records,record,config,set_config,add_torrent,inspect_torrent,torrent),components(schemas(Update,ApiError)),modifiers(&Security))]
 struct Contract;
 struct Security;
 impl utoipa::Modify for Security {
@@ -643,4 +645,28 @@ async fn torrent(
     Path(id): Path<String>,
 ) -> Result<Json<TorrentSnapshot>, Response> {
     api.session.torrent(id).await.map(Json).map_err(rejection)
+}
+
+#[utoipa::path(post,path="/v1/media/inspect",request_body=String,responses((status=200,body=Vec<okytes_core::desktop::MediaChoice>)),security(("bearer"=[])))]
+async fn inspect_media(
+    State(api): State<Arc<Api>>,
+    Json(url): Json<String>,
+) -> Result<Json<Vec<okytes_core::desktop::MediaChoice>>, Response> {
+    api.session
+        .inspect_media(url)
+        .await
+        .map(Json)
+        .map_err(rejection)
+}
+#[utoipa::path(post,path="/v1/jobs/{id}/credentials",params(("id"=String,Path)),request_body=okytes_core::desktop::FileCredentials,responses((status=200)),security(("bearer"=[])))]
+async fn authorize_file(
+    State(api): State<Arc<Api>>,
+    Path(id): Path<String>,
+    Json(credentials): Json<okytes_core::desktop::FileCredentials>,
+) -> Result<Json<()>, Response> {
+    api.session
+        .authorize_file(id, credentials)
+        .await
+        .map(Json)
+        .map_err(rejection)
 }

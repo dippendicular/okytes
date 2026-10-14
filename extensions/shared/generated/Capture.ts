@@ -5,7 +5,7 @@
  */
 export type Capture = { 
 /**
- * HTTP(S) source URL without userinfo.
+ * HTTP(S), or an explicitly selected hls+/dash+ source URL, without userinfo.
  */
 url: string, 
 /**

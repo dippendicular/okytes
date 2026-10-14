@@ -2,6 +2,7 @@ import { api } from "./compat";
 import { checkedReply } from "./messages";
 const status = document.getElementById("status") as HTMLParagraphElement;
 const urls = document.getElementById("urls") as HTMLTextAreaElement;
+let mediaMode = false;
 async function send(value: unknown): Promise<unknown> {
   const result = await api.runtime.sendMessage(value);
   return checkedReply(result);
@@ -12,16 +13,17 @@ async function action(kind: string): Promise<void> {
   try {
     if (kind === "send") {
       const result = (await send({
-        kind: "capture",
+        kind: mediaMode ? "capture_media" : "capture",
         urls: urls.value.split(/\s+/).filter(Boolean),
       })) as { accepted: number; failed: number };
       status.textContent = `${result.accepted} sent to Okytes. ${result.failed} not accepted; their links remain here.`;
     } else if (kind === "collect" || kind === "media") {
       const links = (await send({ kind })) as string[];
       urls.value = links.join("\n");
+      mediaMode = kind === "media";
       status.textContent =
         kind === "media"
-          ? `${links.length} candidate manifests; detection only.`
+          ? `${links.length} manifest candidates. Review, then send; Okytes refuses DRM and unsupported streams.`
           : `${links.length} links collected. Review before sending.`;
     } else await api.runtime.openOptionsPage();
   } catch {

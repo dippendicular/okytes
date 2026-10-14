@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { FileTransferForm, MediaForm } from "./Transfers";
 import { TorrentForm, TorrentDiagnostics } from "./Torrents";
 import { TrafficSettings, defaultTraffic } from "./TrafficSettings";
 import {
@@ -70,6 +71,8 @@ export function App() {
   const [error, setError] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [torrentOpen, setTorrentOpen] = useState(false);
+  const [fileOpen, setFileOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>();
@@ -291,6 +294,8 @@ export function App() {
           ＋ Add downloads
         </button>
         <button onClick={() => setTorrentOpen(true)}>Add torrent</button>
+        <button onClick={() => setFileOpen(true)}>Add FTP / SFTP</button>
+        <button onClick={() => setMediaOpen(true)}>Add media</button>
         <nav aria-label="Download views">
           {views.map((name) => (
             <button
@@ -652,6 +657,32 @@ export function App() {
         </form>
       </Modal>
       <Modal
+        open={fileOpen}
+        onOpenChange={setFileOpen}
+        title="Add file transfer"
+      >
+        <FileTransferForm
+          destination={destination}
+          done={() => {
+            setFileOpen(false);
+            void refresh();
+          }}
+        />
+      </Modal>
+      <Modal
+        open={mediaOpen}
+        onOpenChange={setMediaOpen}
+        title="Download media"
+      >
+        <MediaForm
+          destination={destination}
+          done={() => {
+            setMediaOpen(false);
+            void refresh();
+          }}
+        />
+      </Modal>
+      <Modal
         title="Add torrent"
         open={torrentOpen}
         onOpenChange={setTorrentOpen}
@@ -675,26 +706,47 @@ export function App() {
         {selectedJob && (
           <div className="details">
             <h3>{selectedJob.name}</h3>
+            {["ftp", "ftps", "sftp"].includes(selectedJob.protocol) &&
+              ["Failed", "Paused"].includes(selectedJob.state) && (
+                <FileTransferForm
+                  id={selectedJob.id}
+                  protocol={selectedJob.protocol}
+                  destination={destination}
+                  done={() => {
+                    setSelected(undefined);
+                    void refresh();
+                  }}
+                />
+              )}
             {selectedJob.protocol === "torrent" && (
               <TorrentDiagnostics id={selectedJob.id} />
             )}
             <dl>
               <dt>Source</dt>
-              <dd>{selectedJob.url}</dd>
+              <dd>{selectedJob.url.replace(/^(hls|dash)\+/, "")}</dd>
               <dt>Destination</dt>
               <dd>{selectedJob.destination}</dd>
               {selectedJob.protocol !== "torrent" && (
                 <>
-                  <dt>Strong ETag</dt>
+                  <dt>
+                    {["ftp", "ftps", "sftp"].includes(selectedJob.protocol)
+                      ? "Resume identity"
+                      : selectedJob.protocol.startsWith("hls+") ||
+                          selectedJob.protocol.startsWith("dash+")
+                        ? "VOD plan fingerprint"
+                        : "Strong ETag"}
+                  </dt>
                   <dd>
-                    {selectedJob.etag ??
-                      "Unavailable — safe resume may restart from zero"}
+                    {["ftp", "ftps", "sftp"].includes(selectedJob.protocol)
+                      ? "Remote size and modification time"
+                      : (selectedJob.etag ??
+                        "Unavailable — safe resume may restart from zero")}
                   </dd>
-                  <dt>HTTP response</dt>
+                  <dt>Transfer response</dt>
                   <dd>
                     {selectedJob.response_status ?? "Not sampled this session"}
                   </dd>
-                  <dt>Time to headers</dt>
+                  <dt>Time to response</dt>
                   <dd>
                     {selectedJob.response_latency_ms === null
                       ? "Not sampled this session"

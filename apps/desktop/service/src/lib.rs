@@ -38,6 +38,7 @@ pub struct Session {
     database_path: PathBuf,
     engine: Arc<Engine>,
     torrent: Arc<okytes_transport_torrent::Adapter>,
+    media: Arc<okytes_transport_media::MediaTransport>,
     store: Arc<SqliteStore>,
     queue: Mutex<Queue>,
     _lease: Arc<EngineLease>,
@@ -216,7 +217,19 @@ impl Session {
         // Desktop admission is independently adjustable up to 32; transport caps remain global.
         config.max_concurrent_jobs = 32;
         config.traffic = settings.traffic.clone();
-        let transport = Arc::new(HttpTransport::new(&config).map_err(|e| invalid(e.to_string()))?);
+        let media = okytes_transport_media::MediaTransport::new(Arc::new(
+            HttpTransport::new(&config).map_err(|e| invalid(e.to_string()))?,
+        ));
+        let transport = Arc::new(okytes_transport_ftp::router::Router {
+            files: Arc::new(
+                okytes_transport_ftp::FileTransport::new(
+                    &config,
+                    database.with_extension("known_hosts"),
+                )
+                .map_err(|e| invalid(e.to_string()))?,
+            ),
+            fallback: media.clone(),
+        });
         let engine = Arc::new(Engine::new(
             config,
             transport,
@@ -236,6 +249,7 @@ impl Session {
             database_path: database.into(),
             engine,
             torrent,
+            media,
             store,
             queue: Mutex::new(Queue {
                 stopping: false,
@@ -476,6 +490,32 @@ fn validate_settings(settings: &Settings) -> EngineResult<()> {
 }
 
 impl DesktopService for Session {
+    fn authorize_file(
+        &self,
+        id: String,
+        credentials: okytes_core::desktop::FileCredentials,
+    ) -> Reply<'_, ()> {
+        Box::pin(async move {
+            let _queue = self.queue.lock().await;
+            self.engine
+                .authorize_file(
+                    id.parse().map_err(|_| invalid("invalid job ID"))?,
+                    credentials,
+                )
+                .await
+        })
+    }
+    fn inspect_media(&self, url: String) -> Reply<'_, Vec<okytes_core::desktop::MediaChoice>> {
+        Box::pin(async move {
+            if url.len() > 8192 {
+                return Err(invalid("media URL exceeds bound"));
+            }
+            self.media
+                .inspect(&url)
+                .await
+                .map_err(|e| invalid(e.to_string()))
+        })
+    }
     fn submit(&self, input: okytes_core::desktop::Submit) -> Reply<'_, String> {
         Box::pin(async move {
             let queue = self.queue.lock().await;
@@ -500,6 +540,13 @@ impl DesktopService for Session {
                 "overwrite" => ConflictStrategy::Overwrite,
                 _ => return Err(invalid("invalid conflict strategy")),
             };
+            if input.credentials.is_some() && !matches!(url.scheme(), "ftp" | "ftps" | "sftp") {
+                return Err(invalid("file credentials require a file-protocol URL"));
+            }
+            let headers = input
+                .credentials
+                .map(|c| c.into_headers())
+                .unwrap_or_default();
             let id = self
                 .engine
                 .add(DownloadRequest {
@@ -508,7 +555,7 @@ impl DesktopService for Session {
                     filename: input.filename,
                     expected_hash: input.sha256,
                     conflict_strategy,
-                    headers: vec![],
+                    headers,
                     priority: 0,
                 })
                 .await?;
@@ -569,12 +616,23 @@ impl DesktopService for Session {
                 .map(|s| {
                     let url = url::Url::parse(s).map_err(|_| invalid("invalid URL"))?;
                     if s.len() > 8192
-                        || !matches!(url.scheme(), "http" | "https")
+                        || !matches!(
+                            url.scheme(),
+                            "http"
+                                | "https"
+                                | "ftp"
+                                | "ftps"
+                                | "sftp"
+                                | "hls+http"
+                                | "hls+https"
+                                | "dash+http"
+                                | "dash+https"
+                        )
                         || !url.username().is_empty()
                         || url.password().is_some()
                     {
                         return Err(invalid(
-                            "HTTP(S) URLs without embedded credentials required",
+                            "Supported URLs without embedded credentials required",
                         ));
                     }
                     Ok(url)
@@ -628,10 +686,28 @@ impl DesktopService for Session {
             }
             let mut queue = self.queue.lock().await;
             let page = self.store.page(offset as usize).await?;
-            let next = (page.len() == 256).then_some(offset + 256);
+            let page_full = page.len() == 256;
+            let mut next = None;
+            let mut encoded = 128usize;
             let mut jobs = Vec::with_capacity(page.len());
             for job in page {
-                jobs.push(self.render(job, &mut queue).await?);
+                let job = self.render(job, &mut queue).await?;
+                let size = serde_json::to_vec(&job)
+                    .map_err(|_| invalid("snapshot encoding failed"))?
+                    .len()
+                    + 1;
+                if !jobs.is_empty() && encoded + size > 4 * 1024 * 1024 {
+                    next = Some(offset + jobs.len() as u32);
+                    break;
+                }
+                if size > 4 * 1024 * 1024 {
+                    return Err(invalid("job diagnostics exceed snapshot bound"));
+                }
+                encoded += size;
+                jobs.push(job);
+            }
+            if next.is_none() && page_full {
+                next = Some(offset + jobs.len() as u32);
             }
             queue.revision += 1;
             // Sampling memory only follows this page and the bounded worker set.

@@ -267,6 +267,7 @@ impl Transport for HttpTransport {
                 .is_some_and(|h| h == "bytes")
                 && remote_identity.strong_etag().is_some();
             let result = ProbeResult {
+                checkpoint_ranges: None,
                 final_url: response.url().clone(),
                 content_length: total,
                 accepts_ranges,

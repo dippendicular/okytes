@@ -15,6 +15,8 @@ members = [
     "benchmarks",
     "crates/torrent-types",
     "crates/transport-torrent",
+    "crates/transport-ftp",
+    "crates/transport-media",
 ]
 exclude = ["vendor/librqbit", "vendor/librqbit-utp", "vendor/librqbit-dht", "vendor/librqbit-tracker-comms"]
 
@@ -76,6 +78,8 @@ okytes-persistence = { version = "=0.1.0", path = "crates/persistence" }
 okytes-test-support = { version = "=0.1.0", path = "crates/test-support" }
 okytes-torrent-types = { version = "=0.1.0", path = "crates/torrent-types" }
 okytes-transport-torrent = { version = "=0.1.0", path = "crates/transport-torrent" }
+okytes-transport-ftp = { version = "=0.1.0", path = "crates/transport-ftp" }
+okytes-transport-media = { version = "=0.1.0", path = "crates/transport-media" }
 
 [patch.crates-io]
 librqbit = { path = "vendor/librqbit" }

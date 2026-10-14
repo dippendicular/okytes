@@ -22,4 +22,5 @@
 //!
 //! **This crate must never be a dependency of non-test code.**
 
+pub mod file_server;
 pub mod server;

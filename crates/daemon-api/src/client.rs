@@ -134,6 +134,27 @@ impl Client {
     }
 }
 impl DesktopService for Client {
+    fn inspect_media(&self, url: String) -> Reply<'_, Vec<okytes_core::desktop::MediaChoice>> {
+        Box::pin(async move {
+            self.request(Method::POST, "v1/media/inspect", Some(&url))
+                .await
+        })
+    }
+    fn authorize_file(
+        &self,
+        id: String,
+        credentials: okytes_core::desktop::FileCredentials,
+    ) -> Reply<'_, ()> {
+        Box::pin(async move {
+            let id: uuid::Uuid = id.parse().map_err(|_| invalid())?;
+            self.request(
+                Method::POST,
+                &format!("v1/jobs/{id}/credentials"),
+                Some(&credentials),
+            )
+            .await
+        })
+    }
     fn submit(&self, input: Submit) -> Reply<'_, String> {
         Box::pin(async move { self.request(Method::POST, "v1/submit", Some(&input)).await })
     }

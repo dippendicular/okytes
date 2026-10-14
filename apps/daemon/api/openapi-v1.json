@@ -198,7 +198,7 @@
             ]
           },
           "url": {
-            "description": "HTTP(S) source URL without userinfo.",
+            "description": "HTTP(S), or an explicitly selected hls+/dash+ source URL, without userinfo.",
             "type": "string"
           }
         },
@@ -491,6 +491,32 @@
             "type": "object"
           }
         ]
+      },
+      "FileCredentials": {
+        "additionalProperties": false,
+        "description": "Memory-only file login and an optional explicitly confirmed SSH fingerprint.",
+        "properties": {
+          "confirmed_host_key": {
+            "description": "Exact SHA256 fingerprint the user has verified and confirmed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "description": "Password, retained only for this process session.",
+            "type": "string"
+          },
+          "username": {
+            "description": "Remote account name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object"
       },
       "IssueToken": {
         "additionalProperties": false,
@@ -810,6 +836,39 @@
         ],
         "type": "string"
       },
+      "MediaChoice": {
+        "description": "A manifest-advertised quality, audio or subtitle selection.",
+        "properties": {
+          "extension": {
+            "description": "Suggested output extension for the supported assembly path.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable selection identifier.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "video, audio or subtitles.",
+            "type": "string"
+          },
+          "label": {
+            "description": "Quality, language and codec details reported by the manifest.",
+            "type": "string"
+          },
+          "url": {
+            "description": "Explicit media source URL for this selection.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "url",
+          "kind",
+          "extension"
+        ],
+        "type": "object"
+      },
       "Operation": {
         "description": "Operations available to browser clients. No arbitrary queue/admin access.",
         "oneOf": [
@@ -1113,6 +1172,17 @@
             "description": "rename, fail or overwrite.",
             "type": "string"
           },
+          "credentials": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FileCredentials",
+                "description": "Request-local file-protocol credentials; never stored in history."
+              }
+            ]
+          },
           "destination": {
             "description": "Absolute override; null uses service preferences.",
             "type": [
@@ -1135,7 +1205,7 @@
             ]
           },
           "url": {
-            "description": "HTTP(S) URL without userinfo.",
+            "description": "Supported transfer URL without userinfo.",
             "type": "string"
           }
         },
@@ -2289,6 +2359,198 @@
               "application/json": {
                 "schema": {
                   "default": null
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Missing, expired or revoked bearer token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Host, Origin or scope rejected"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request deadline"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request body exceeds limit"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Rate, request or subscriber admission limit"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/v1/jobs/{id}/credentials": {
+      "post": {
+        "operationId": "authorize_file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileCredentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Missing, expired or revoked bearer token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Host, Origin or scope rejected"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request deadline"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request body exceeds limit"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Rate, request or subscriber admission limit"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/v1/media/inspect": {
+      "post": {
+        "operationId": "inspect_media",
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MediaChoice"
+                  },
+                  "type": "array"
                 }
               }
             },

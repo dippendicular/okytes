@@ -33,6 +33,12 @@ async fn every_endpoint_rejects_missing_credentials_and_enforces_all_scopes() {
         .unwrap()
         .token;
     let paths = [
+        (Method::POST, "v1/media/inspect", Scope::Control),
+        (
+            Method::POST,
+            "v1/jobs/not-a-job/credentials",
+            Scope::Control,
+        ),
         (Method::POST, "v1/torrents", Scope::Control),
         (Method::POST, "v1/torrents/inspect", Scope::Control),
         (Method::GET, "v1/torrents/not-a-job", Scope::ReadOnly),
@@ -151,6 +157,7 @@ async fn real_client_controls_downloads_and_survives_client_disconnect() {
     let client = f.client(f.token.clone());
     let id = client
         .submit(Submit {
+            credentials: None,
             url: format!("http://{}/normal", source.addr),
             destination: None,
             filename: Some("daemon.bin".into()),
@@ -304,6 +311,7 @@ async fn slow_headers_do_not_block_other_clients_and_control_destinations_are_sc
     ] {
         assert!(client
             .submit(Submit {
+                credentials: None,
                 url: "http://127.0.0.1/file".into(),
                 destination: Some(destination),
                 filename: None,
@@ -328,6 +336,7 @@ async fn concurrent_controls_and_graceful_shutdown_preserve_queue_ownership() {
     let client = f.client(f.token.clone());
     let id = client
         .submit(Submit {
+            credentials: None,
             url: format!("http://{}/normal", source.addr),
             destination: None,
             filename: None,
@@ -345,6 +354,7 @@ async fn concurrent_controls_and_graceful_shutdown_preserve_queue_ownership() {
     assert!(client.control(id, Action::Resume).await.is_err());
     let id = client
         .submit(Submit {
+            credentials: None,
             url: format!("http://{}/normal", source.addr),
             destination: None,
             filename: None,

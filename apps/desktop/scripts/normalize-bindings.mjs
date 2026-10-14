@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 for (const name of [
+  "FileCredentials",
+  "MediaChoice",
   "Settings",
   "Job",
   "TrafficPolicy",

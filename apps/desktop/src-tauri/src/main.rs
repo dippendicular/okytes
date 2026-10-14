@@ -6,6 +6,31 @@ use tauri::{Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
 type Service = Arc<dyn AppService>;
+#[tauri::command]
+async fn submit(
+    service: State<'_, Service>,
+    input: okytes_core::desktop::Submit,
+) -> Result<String, String> {
+    service.submit(input).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn inspect_media(
+    service: State<'_, Service>,
+    url: String,
+) -> Result<Vec<okytes_core::desktop::MediaChoice>, String> {
+    service.inspect_media(url).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn authorize_file(
+    service: State<'_, Service>,
+    id: String,
+    credentials: okytes_core::desktop::FileCredentials,
+) -> Result<(), String> {
+    service
+        .authorize_file(id, credentials)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn pause_all(service: State<'_, Service>) -> Result<(), String> {
@@ -70,7 +95,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(tauri::generate_handler![submit,inspect_media,authorize_file,
             list,
             get,
             add,

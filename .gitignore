@@ -5,6 +5,8 @@
 AGENTS.md
 AGENTS.override.md
 
+# Local root scripts and dependency patches
+
 # Rust / Cargo
 /vendor/
 /target/
@@ -69,6 +71,7 @@ browser-token.json
 !tests/fixtures/**/*.key
 
 # Download engine runtime state / user downloads
+*.known_hosts
 *.part
 *.partial
 *.download

@@ -146,6 +146,47 @@ impl Engine {
             sessions.remove(&id);
         }
     }
+    /// Restore an explicitly supplied memory-only file login after process loss.
+    pub async fn authorize_file(
+        &self,
+        id: JobId,
+        credentials: crate::desktop::FileCredentials,
+    ) -> EngineResult<()> {
+        let mut job = self.status(id).await?;
+        if !matches!(job.protocol.as_str(), "ftp" | "ftps" | "sftp")
+            || job.state.is_active()
+            || job.state.is_terminal() && job.state != JobState::Failed
+        {
+            return Err(EngineError::Config(
+                "file login requires an idle resumable file job".into(),
+            ));
+        }
+        if credentials.username.len() > 256
+            || credentials.password.len() > 4096
+            || credentials
+                .confirmed_host_key
+                .as_ref()
+                .is_some_and(|s| s.len() > 128)
+            || credentials
+                .clone()
+                .into_headers()
+                .iter()
+                .any(|(_, v)| v.bytes().any(|b| b < 32 || b == 127))
+        {
+            return Err(EngineError::Config("invalid file credentials".into()));
+        }
+        job.requires_session = true;
+        self.store.save_job(&job).await?;
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| EngineError::Config("session lock failed".into()))?;
+        if !sessions.contains_key(&id) && sessions.len() >= 128 {
+            return Err(EngineError::Config("session limit reached".into()));
+        }
+        sessions.insert(id, credentials.into_headers());
+        Ok(())
+    }
     fn session_headers(&self, job: &JobRecord) -> EngineResult<Vec<(String, String)>> {
         if !job.requires_session {
             return Ok(vec![]);
@@ -157,7 +198,12 @@ impl Engine {
             .cloned()
             .ok_or_else(|| {
                 EngineError::Config(
-                    "Browser session expired; capture this download again from the browser".into(),
+                    if matches!(job.protocol.as_str(), "ftp" | "ftps" | "sftp") {
+                        "File login expired; enter credentials again to resume"
+                    } else {
+                        "Browser session expired; capture this download again from the browser"
+                    }
+                    .into(),
                 )
             })
     }
@@ -174,22 +220,29 @@ impl Engine {
                 .sum::<usize>()
                 > 32768
             || request.headers.iter().any(|(name, value)| {
-                !matches!(
+                !(matches!(
                     name.to_ascii_lowercase().as_str(),
                     "cookie" | "authorization" | "referer" | "user-agent" | "accept"
-                ) || !value.is_ascii()
+                ) || matches!(request.url.scheme(), "ftp" | "ftps" | "sftp")
+                    && matches!(
+                        name.as_str(),
+                        "okytes-user" | "okytes-password" | "okytes-host-key"
+                    ))
+                    || (!value.is_ascii()
+                        && !matches!(request.url.scheme(), "ftp" | "ftps" | "sftp"))
                     || value.bytes().any(|b| b < 32 || b == 127)
             })
         {
             return Err(EngineError::Config("invalid session headers".into()));
         }
 
-        if !matches!(request.url.scheme(), "http" | "https")
+        if !self.transport.supports(request.url.scheme())
+            || request.url.host_str().is_none()
             || !request.url.username().is_empty()
             || request.url.password().is_some()
         {
             return Err(EngineError::Config(
-                "HTTP(S) URL without embedded credentials required".into(),
+                "supported URL without embedded credentials required".into(),
             ));
         }
         if request.url.as_str().len() > 8192 {
@@ -231,7 +284,11 @@ impl Engine {
         }
         let partial_path = dir.join(format!(".{id}.okytes.part"));
         let job = JobRecord {
-            protocol: crate::types::http_protocol(),
+            protocol: if matches!(request.url.scheme(), "http" | "https") {
+                crate::types::http_protocol()
+            } else {
+                request.url.scheme().into()
+            },
             capture_id,
             requires_session,
             use_server_filename: request.filename.is_none(),
@@ -319,7 +376,9 @@ impl Engine {
     }
     /// Execute a queued or crash-interrupted job with bounded admission.
     pub async fn execute_job(&self, id: JobId) -> EngineResult<()> {
-        if self.status(id).await?.protocol != "http" {
+        if !self.transport.supports(self.status(id).await?.url.scheme())
+            || self.status(id).await?.protocol == "torrent"
+        {
             return Err(EngineError::Config(
                 "job requires a different protocol executor".into(),
             ));
@@ -474,9 +533,14 @@ impl Engine {
         let probe = self.probe(&job).await?;
         let mut segments = self.store.load_segments(id).await?;
         let durable = segments.iter().map(|s| s.bytes_downloaded).sum::<u64>();
+        let resumable_identity = if matches!(job.protocol.as_str(), "ftp" | "ftps" | "sftp") {
+            job.remote_identity.last_modified.is_some()
+                && job.remote_identity.content_length.is_some()
+        } else {
+            job.remote_identity.strong_etag().is_some()
+        };
         if durable > 0
-            && (job.remote_identity.strong_etag().is_none()
-                || !job.remote_identity.is_compatible(&probe.remote_identity))
+            && (!resumable_identity || !job.remote_identity.is_compatible(&probe.remote_identity))
         {
             return Err(EngineError::IdentityMismatch {
                 job_id: id,
@@ -534,12 +598,21 @@ impl Engine {
                 // A crash may leave preallocated data before ownership metadata
                 // commits. With no checkpoints, restart this unique partial.
                 remove_partial(&job.partial_path).await?;
-                let ranges = allocate_ranges(
-                    size,
-                    1,
-                    self.config.min_segment_size,
-                    self.config.max_segment_size,
-                );
+                let ranges = if let Some(ref ranges) = probe.checkpoint_ranges {
+                    if ranges.len() > 1024 {
+                        return Err(EngineError::Config(
+                            "source segment count exceeds 1024".into(),
+                        ));
+                    }
+                    ranges.clone()
+                } else {
+                    allocate_ranges(
+                        size,
+                        1,
+                        self.config.min_segment_size,
+                        self.config.max_segment_size,
+                    )
+                };
                 validate_ranges(&ranges, size).map_err(EngineError::Scheduler)?;
                 let file = self.files.create(&job.partial_path).await?;
                 file.set_len(size)
@@ -603,7 +676,8 @@ impl Engine {
                 }
                 // Split only relinquished tails: no active response can still
                 // own either half. Persist both ownership updates atomically.
-                while workers.len() + pending.len() < admission
+                while probe.checkpoint_ranges.is_none()
+                    && workers.len() + pending.len() < admission
                     && total_segments < self.config.max_segments_per_job
                 {
                     let Some(index) = pending
@@ -1128,7 +1202,7 @@ impl DownloadService for Engine {
                 .load_job(id)
                 .await?
                 .ok_or(EngineError::JobNotFound(id))?;
-            if job.protocol == "http" && job.state != JobState::Completed {
+            if job.protocol != "torrent" && job.state != JobState::Completed {
                 job.bytes_downloaded = self
                     .store
                     .load_segments(id)

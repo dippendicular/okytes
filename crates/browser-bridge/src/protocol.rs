@@ -14,7 +14,7 @@ pub const HOST_NAME: &str = "org.okytes.bridge";
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../../extensions/shared/generated/")]
 pub struct Capture {
-    /// HTTP(S) source URL without userinfo.
+    /// HTTP(S), or an explicitly selected hls+/dash+ source URL, without userinfo.
     pub url: String,
     /// Optional safe basename, never a path.
     pub filename: Option<String>,
@@ -96,7 +96,10 @@ impl Request {
         if let Operation::Capture(capture) = &self.operation {
             let url = url::Url::parse(&capture.url).map_err(|_| "invalid_url")?;
             if capture.url.len() > 8192
-                || !matches!(url.scheme(), "http" | "https")
+                || !matches!(
+                    url.scheme(),
+                    "http" | "https" | "hls+http" | "hls+https" | "dash+http" | "dash+https"
+                )
                 || !url.username().is_empty()
                 || url.password().is_some()
                 || url.host_str().is_none()

@@ -1,4 +1,5 @@
-//! Versioned desktop service boundary. DTOs contain no platform handles or secrets.
+//! Versioned desktop boundary. Persisted DTOs omit secrets; request-local file
+//! credentials are redacted and passed only to the engine memory session.
 use crate::error::EngineResult;
 use serde::{Deserialize, Serialize};
 use std::{future::Future, pin::Pin};
@@ -11,7 +12,10 @@ pub type Reply<'a, T> = Pin<Box<dyn Future<Output = EngineResult<T>> + Send + 'a
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Submit {
-    /// HTTP(S) URL without userinfo.
+    /// Request-local file-protocol credentials; never stored in history.
+    #[serde(default)]
+    pub credentials: Option<FileCredentials>,
+    /// Supported transfer URL without userinfo.
     pub url: String,
     /// Absolute override; null uses service preferences.
     pub destination: Option<String>,
@@ -21,6 +25,53 @@ pub struct Submit {
     pub sha256: Option<String>,
     /// rename, fail or overwrite.
     pub conflict: String,
+}
+
+/// Memory-only file login and an optional explicitly confirmed SSH fingerprint.
+#[derive(Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct FileCredentials {
+    /// Remote account name.
+    pub username: String,
+    /// Password, retained only for this process session.
+    pub password: String,
+    /// Exact SHA256 fingerprint the user has verified and confirmed.
+    pub confirmed_host_key: Option<String>,
+}
+impl std::fmt::Debug for FileCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FileCredentials(<redacted>)")
+    }
+}
+impl FileCredentials {
+    /// Convert to the engine's existing bounded memory-only session handoff.
+    pub fn into_headers(self) -> Vec<(String, String)> {
+        let mut headers = vec![
+            ("okytes-user".into(), self.username),
+            ("okytes-password".into(), self.password),
+        ];
+        if let Some(key) = self.confirmed_host_key {
+            headers.push(("okytes-host-key".into(), key));
+        }
+        headers
+    }
+}
+
+/// A manifest-advertised quality, audio or subtitle selection.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct MediaChoice {
+    /// Stable selection identifier.
+    pub id: String,
+    /// Quality, language and codec details reported by the manifest.
+    pub label: String,
+    /// Explicit media source URL for this selection.
+    pub url: String,
+    /// video, audio or subtitles.
+    pub kind: String,
+    /// Suggested output extension for the supported assembly path.
+    pub extension: String,
 }
 
 /// Persisted presentation and queue settings.
@@ -144,6 +195,24 @@ pub struct Snapshot {
 
 /// GUI-independent management contract for an embedded engine or future daemon.
 pub trait DesktopService: Send + Sync {
+    /// Restore a file login in memory; no password enters durable job metadata.
+    fn authorize_file(&self, id: String, credentials: FileCredentials) -> Reply<'_, ()> {
+        Box::pin(async move {
+            let _ = (id, credentials);
+            Err(crate::error::EngineError::Config(
+                "file authorization is unavailable".into(),
+            ))
+        })
+    }
+    /// Inspect supported VOD tracks without creating a job or persisting credentials.
+    fn inspect_media(&self, url: String) -> Reply<'_, Vec<MediaChoice>> {
+        Box::pin(async move {
+            let _ = url;
+            Err(crate::error::EngineError::Config(
+                "media inspection is unavailable".into(),
+            ))
+        })
+    }
     /// Add one advanced request, preserving CLI options across backends.
     fn submit(&self, input: Submit) -> Reply<'_, String>;
     /// Pause the runnable queue with one admission lock and wait for all workers.

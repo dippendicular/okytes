@@ -67,6 +67,7 @@ pub struct ObservedRequest {
     pub range: Option<String>,
 }
 struct State {
+    fixtures: Mutex<HashMap<String, Bytes>>,
     config: ServerConfig,
     version: AtomicU64,
     requests: Mutex<Vec<ObservedRequest>>,
@@ -105,6 +106,23 @@ pub struct TestServer {
     handle: JoinHandle<()>,
 }
 impl TestServer {
+    /// Add or replace a bounded synthetic media fixture (8 MiB each, 128 total).
+    pub fn fixture(&self, path: &str, bytes: impl Into<Bytes>) -> std::io::Result<()> {
+        let bytes = bytes.into();
+        if bytes.len() > 8 * 1024 * 1024 || !path.starts_with("/fixtures/") {
+            return Err(std::io::Error::other("invalid fixture bounds"));
+        }
+        let mut fixtures = self
+            .state
+            .fixtures
+            .lock()
+            .map_err(|_| std::io::Error::other("fixture lock failed"))?;
+        if fixtures.len() >= 128 && !fixtures.contains_key(path) {
+            return Err(std::io::Error::other("fixture count bound"));
+        }
+        fixtures.insert(path.into(), bytes);
+        Ok(())
+    }
     /// Bind loopback and launch a deterministic server.
     pub async fn start(config: ServerConfig) -> Result<Self, std::io::Error> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -119,6 +137,7 @@ impl TestServer {
         let content_hash = format!("{:x}", hash.finalize());
         let etag = "\"version-1\"".to_owned();
         let state = Arc::new(State {
+            fixtures: Mutex::new(HashMap::new()),
             config,
             version: AtomicU64::new(1),
             requests: Mutex::new(vec![]),
@@ -255,6 +274,53 @@ async fn handle_request(
                 if_range: if_range.clone(),
             });
         }
+    }
+    if path.starts_with("/fixtures/") {
+        let bytes = state
+            .fixtures
+            .lock()
+            .ok()
+            .and_then(|fixtures| fixtures.get(&path).cloned());
+        let Some(bytes) = bytes else {
+            return Ok(response(404, vec![], empty()));
+        };
+        let etag = format!("\"{:x}\"", Sha256::digest(&bytes));
+        let mut headers = vec![("etag", etag.clone()), ("accept-ranges", "bytes".into())];
+        let total = bytes.len();
+        let mut status = 200;
+        let mut data = bytes;
+        if let Some(ref range) = range {
+            if if_range.as_ref().is_none_or(|value| value == &etag) {
+                let Some((start, end)) = parse_range(range, total) else {
+                    return Ok(response(416, vec![], empty()));
+                };
+                data = data.slice(start..=end);
+                status = 206;
+                headers.push(("content-range", format!("bytes {start}-{end}/{total}")));
+            }
+        }
+        headers.push(("content-length", data.len().to_string()));
+        let body = if req.method() == Method::HEAD {
+            empty()
+        } else {
+            let delay = state.config.frame_delay;
+            StreamBody::new(stream::unfold(
+                (data, 0usize),
+                move |(data, offset)| async move {
+                    if offset >= data.len() {
+                        return None;
+                    }
+                    if !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    let end = data.len().min(offset + 8192);
+                    let frame = Frame::data(data.slice(offset..end));
+                    Some((Ok::<_, std::io::Error>(frame), (data, end)))
+                },
+            ))
+            .boxed_unsync()
+        };
+        return Ok(response(status, headers, body));
     }
     if path == "/redirect" {
         return Ok(response(302, vec![("location", "/normal".into())], empty()));

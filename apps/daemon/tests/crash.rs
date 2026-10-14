@@ -49,6 +49,7 @@ async fn forced_daemon_kill_restarts_from_durable_bytes_and_finishes_identically
     let (mut child, client) = start(root.path(), port).await;
     let id = client
         .submit(Submit {
+            credentials: None,
             url: format!("http://{}/normal", server.addr),
             destination: None,
             filename: Some("crash.bin".into()),

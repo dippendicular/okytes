@@ -81,7 +81,11 @@ handed off in memory for one job. A desktop restart loses those session values;
 credential-bearing jobs then require a new browser capture. A plain unauthenticated
 job retains normal crash recovery.
 
-Media detection lists candidate `.m3u8` and `.mpd` URLs. It does not extract media.
+Media detection lists candidate `.m3u8` and `.mpd` URLs. Review them and use
+**Send to Okytes** to create HLS/DASH jobs. Okytes validates the manifest and
+selected segments, supports VOD and authorized AES-128 HLS, and refuses DRM,
+live streams and unsupported assembly formats. Automatic ordinary URL capture
+does not reinterpret arbitrary files as media.
 Required permissions cover native messaging, downloads, menus, rule storage and
 user-selected tab scripting. Cookies and request observation require optional
 site access; there is no required blanket host grant.

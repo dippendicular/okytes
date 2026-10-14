@@ -549,7 +549,7 @@ impl JobStore for SqliteStore {
     fn load_segments(&self, id: JobId) -> Reply<Vec<SegmentRecord>> {
         self.call(move |conn| {
             let mut stmt = conn
-                .prepare("SELECT record FROM segments WHERE job_id=?1 LIMIT 129")
+                .prepare("SELECT record FROM segments WHERE job_id=?1 LIMIT 1025")
                 .map_err(db)?;
             let rows = stmt
                 .query_map([id.to_string()], |r| r.get::<_, String>(0))
@@ -558,7 +558,7 @@ impl JobStore for SqliteStore {
                 .map(|r| serde_json::from_str(&r.map_err(db)?).map_err(db))
                 .collect::<Result<_, _>>()?;
             segments.sort_by_key(|s| s.start);
-            if segments.len() > 128 {
+            if segments.len() > 1024 {
                 return Err(PersistenceError::Inconsistent(
                     "segment count exceeds resource limit".into(),
                 )

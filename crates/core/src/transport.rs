@@ -16,6 +16,9 @@ use crate::types::RemoteIdentity;
 /// Result of probing a remote resource.
 #[derive(Debug, Clone)]
 pub struct ProbeResult {
+    /// Optional immutable source boundaries (for VOD segments), at most 1024.
+    /// Engine validates complete non-overlapping coverage before allocating data.
+    pub checkpoint_ranges: Option<Vec<crate::range::ByteRange>>,
     /// Final URL after redirects.
     pub final_url: Url,
     /// Total size in bytes, if the server reports it.
@@ -69,6 +72,10 @@ pub struct ContentRange {
 /// We use explicit `Pin<Box<dyn Future>>` returns instead of `async fn` in
 /// the trait to maintain object safety for dynamic dispatch (`dyn Transport`).
 pub trait Transport: Send + Sync {
+    /// Schemes this configured transport can execute. Default retains HTTP behavior.
+    fn supports(&self, scheme: &str) -> bool {
+        matches!(scheme, "http" | "https")
+    }
     /// Probe the remote resource to determine size, range support, and identity.
     fn probe(
         &self,

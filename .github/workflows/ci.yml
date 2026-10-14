@@ -18,8 +18,11 @@ jobs:
         with:
           node-version: 24
       - name: Linux desktop libraries
+        # vendor stays private/ignored; reconstruct the reviewed patch set.
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Prepare patched torrent dependencies
+        run: node scripts/prepare-vendor.mjs
       - name: Check generated bindings
         run: |
           cargo test -p okytes-core --lib --locked desktop::export_bindings
@@ -67,4 +70,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/prepare-vendor.mjs
       - run: cargo test -p okytes-cli --test process --release --locked -- --ignored --nocapture
