@@ -24,7 +24,7 @@ pub type SegmentId = Uuid;
 /// Resume is only permitted if the current remote identity matches the one
 /// stored at download start. Strong ETags are required for `If-Range`; weak
 /// ETags (`W/...`) are never used for byte-range resume.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RemoteIdentity {
     /// Strong ETag value, if provided. Weak ETags are excluded.
     pub etag: Option<String>,
@@ -102,7 +102,7 @@ impl RemoteIdentity {
 }
 
 /// Strategy for handling filename conflicts at the destination.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub enum ConflictStrategy {
     /// Rename the new file with a numeric suffix (e.g., `file (1).zip`).
     #[default]
@@ -137,10 +137,11 @@ pub struct DownloadRequest {
 }
 
 /// Persistent metadata for a download job.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct JobRecord {
     /// Browser request id for durable idempotency, never a credential.
     #[serde(default)]
+    #[schema(value_type=Option<String>, format=Uuid)]
     pub capture_id: Option<JobId>,
     /// Requires memory-only browser session headers; fail after session loss.
     #[serde(default)]
@@ -152,12 +153,16 @@ pub struct JobRecord {
     #[serde(default)]
     pub verified_sha256: Option<String>,
     /// Unique job identifier.
+    #[schema(value_type=String, format=Uuid)]
     pub id: JobId,
     /// The download URL.
+    #[schema(value_type = String)]
     pub url: Url,
     /// Final output path (after sanitization and conflict resolution).
+    #[schema(value_type = String)]
     pub output_path: PathBuf,
     /// Path to the partial/temp file during download.
+    #[schema(value_type = String)]
     pub partial_path: PathBuf,
     /// Total file size, if known.
     pub total_size: Option<u64>,
@@ -223,7 +228,7 @@ impl SegmentRecord {
 }
 
 /// Configuration for the download engine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EngineConfig {
     /// Maximum concurrent downloads.
     pub max_concurrent_jobs: usize,
@@ -247,8 +252,10 @@ pub struct EngineConfig {
     /// Maximum backoff delay in milliseconds.
     pub retry_max_delay_ms: u64,
     /// Default output directory.
+    #[schema(value_type = String)]
     pub default_output_dir: PathBuf,
     /// Database file path.
+    #[schema(value_type = String)]
     pub database_path: PathBuf,
     /// EWMA smoothing factor for throughput measurement (0.0–1.0).
     pub ewma_alpha: f64,

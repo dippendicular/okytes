@@ -16,6 +16,10 @@ use uuid::Uuid;
 #[derive(Parser)]
 #[command(name = "okytes", version, about = "Crash-safe HTTP download manager")]
 struct Args {
+    #[arg(long, global = true)]
+    daemon_url: Option<String>,
+    #[arg(long, global = true)]
+    token_file: Option<PathBuf>,
     #[arg(long, global = true, default_value = "okytes.db")]
     db: PathBuf,
     #[arg(long, global = true)]
@@ -104,6 +108,14 @@ async fn execute(args: Args) -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .init();
+    let remote = match (&args.daemon_url, &args.token_file) {
+        (None, None) => okytes_daemon_api::Client::from_environment()?,
+        (Some(url), Some(file)) => Some(okytes_daemon_api::Client::from_file(url.clone(), file)?),
+        _ => bail!("provide both --daemon-url and --token-file"),
+    };
+    if let Some(client) = remote {
+        return remote_execute(args, client).await;
+    }
     let store = Arc::new(SqliteStore::open(&args.db)?);
     let mut config = store.config().await?;
     config.database_path = args.db.clone();
@@ -221,6 +233,144 @@ async fn execute(args: Args) -> Result<()> {
             }
             if failed {
                 bail!("one or more jobs failed; inspect status and retry with resume");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn remote_record(
+    client: &okytes_daemon_api::Client,
+    id: Uuid,
+) -> Result<okytes_core::types::JobRecord> {
+    Ok(client
+        .request(
+            reqwest::Method::GET,
+            &format!("v1/records/{id}"),
+            None::<&()>,
+        )
+        .await?)
+}
+async fn remote_wait(
+    client: &okytes_daemon_api::Client,
+    id: Uuid,
+) -> Result<okytes_core::types::JobRecord> {
+    loop {
+        let record = remote_record(client, id).await?;
+        if record.state == JobState::Failed {
+            bail!("download failed; inspect status");
+        }
+        if record.state.is_terminal() || record.state == JobState::Paused {
+            return Ok(record);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result<()> {
+    use okytes_core::desktop::{Action, DesktopService, Submit};
+    use reqwest::Method;
+    match args.command {
+        Command::Add {
+            url,
+            output,
+            filename,
+            sha256,
+            run,
+            conflict,
+        } => {
+            let destination = output
+                .map(|path| {
+                    if path.is_absolute() {
+                        Ok(path)
+                    } else {
+                        std::env::current_dir().map(|cwd| cwd.join(path))
+                    }
+                })
+                .transpose()?
+                .map(|p| p.to_string_lossy().into_owned());
+            let id = client
+                .submit(Submit {
+                    url,
+                    destination,
+                    filename,
+                    sha256,
+                    conflict,
+                })
+                .await?;
+            let id = Uuid::parse_str(&id)?;
+            print(id, args.json)?;
+            if run {
+                print(remote_wait(&client, id).await?, args.json)?;
+            }
+        }
+        Command::List { offset } => {
+            let records: Vec<okytes_core::types::JobRecord> = client
+                .request(
+                    Method::GET,
+                    &format!("v1/records?offset={offset}"),
+                    None::<&()>,
+                )
+                .await?;
+            print(records, args.json)?;
+        }
+        Command::Status { id } => print(remote_record(&client, id).await?, args.json)?,
+        Command::Pause { id } => {
+            client.control(id.to_string(), Action::Pause).await?;
+            print(remote_record(&client, id).await?, args.json)?;
+        }
+        Command::Resume { id, run } => {
+            client.control(id.to_string(), Action::Resume).await?;
+            print(
+                if run {
+                    remote_wait(&client, id).await?
+                } else {
+                    remote_record(&client, id).await?
+                },
+                args.json,
+            )?;
+        }
+        Command::Cancel { id } => {
+            client.control(id.to_string(), Action::Cancel).await?;
+            print(remote_record(&client, id).await?, args.json)?;
+        }
+        Command::Queue { id, priority } => {
+            client
+                .control(id.to_string(), Action::Priority(priority))
+                .await?;
+            print(remote_record(&client, id).await?, args.json)?;
+        }
+        Command::Config { set } => {
+            if let Some(path) = set {
+                let config: EngineConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+                client
+                    .request::<()>(Method::PUT, "v1/config", Some(&config))
+                    .await?;
+            }
+            let config: EngineConfig = client
+                .request(Method::GET, "v1/config", None::<&()>)
+                .await?;
+            print(config, args.json)?;
+        }
+        Command::Run => {
+            let mut offset = 0;
+            loop {
+                let records: Vec<okytes_core::types::JobRecord> = client
+                    .request(
+                        Method::GET,
+                        &format!("v1/records?offset={offset}"),
+                        None::<&()>,
+                    )
+                    .await?;
+                let count = records.len();
+                for record in records {
+                    if record.state == JobState::Queued || record.state.is_active() {
+                        print(remote_wait(&client, record.id).await?, args.json)?;
+                    }
+                }
+                if count < 256 {
+                    break;
+                }
+                offset += count;
             }
         }
     }

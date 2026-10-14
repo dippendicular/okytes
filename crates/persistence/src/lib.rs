@@ -63,6 +63,17 @@ impl SqliteStore {
         })
     }
 
+    /// Commit related non-secret preferences together, without partial settings
+    /// updates when engine configuration and queue preferences change together.
+    pub fn set_preferences(&self, values: Vec<(String, String)>) -> Reply<()> {
+        self.call(move |conn|{
+            if values.len()>32 || values.iter().any(|(key,value)|key.len()>64 || value.len()>16384){return Err(db("preferences exceed size limit"));}
+            let transaction=conn.transaction().map_err(db)?;
+            for (key,value) in values {transaction.execute("INSERT INTO settings VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,value]).map_err(db)?;}
+            transaction.commit().map_err(db)
+        })
+    }
+
     /// Open/migrate a database and launch its bounded writer.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, EngineError> {
         let path = path.as_ref().to_owned();

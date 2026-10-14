@@ -1,0 +1,13 @@
+<!-- WinSW configuration only; obtain the wrapper separately and configure its
+     service account as the profile owner. The daemon itself is a console process. -->
+<service>
+  <id>okytes-daemon</id>
+  <name>Okytes download daemon</name>
+  <description>Authenticated local download queue</description>
+  <executable>%BASE%\okytes-daemon.exe</executable>
+  <arguments>--data-dir "%LOCALAPPDATA%\OkytesDaemon"</arguments>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="3 sec"/>
+  <stoptimeout>90 sec</stoptimeout>
+  <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>3</keepFiles></log>
+</service>

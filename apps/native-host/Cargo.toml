@@ -6,11 +6,15 @@ license.workspace = true
 
 [dependencies]
 okytes-browser-bridge = { version = "=0.1.0", path = "../../crates/browser-bridge" }
+okytes-daemon-api = { version = "=0.1.0", path = "../../crates/daemon-api" }
 tokio.workspace = true
 serde_json.workspace = true
 clap.workspace = true
 
 [dev-dependencies]
+okytes-daemon = { version = "=0.1.0", path = "../daemon" }
+axum-server = "0.8"
+hyper-util.workspace = true
 tempfile.workspace = true
 okytes-desktop-service = { version = "=0.1.0", path = "../desktop/service" }
 okytes-test-support.workspace = true

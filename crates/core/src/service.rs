@@ -9,9 +9,10 @@ use crate::state::JobState;
 use crate::types::{DownloadRequest, JobId, JobRecord};
 
 /// Progress information for a running download.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct DownloadProgress {
     /// Job identifier.
+    #[schema(value_type=String, format=Uuid)]
     pub job_id: JobId,
     /// Current job state.
     pub state: JobState,
@@ -30,10 +31,11 @@ pub struct DownloadProgress {
 }
 
 /// Events emitted by the engine.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub enum EngineEvent {
     /// Job state changed.
     JobStateChanged {
+        #[schema(value_type=String, format=Uuid)]
         job_id: JobId,
         old_state: JobState,
         new_state: JobState,
@@ -41,9 +43,16 @@ pub enum EngineEvent {
     /// Download progress updated.
     Progress(DownloadProgress),
     /// Job completed successfully.
-    JobCompleted { job_id: JobId },
+    JobCompleted {
+        #[schema(value_type=String, format=Uuid)]
+        job_id: JobId,
+    },
     /// Job failed with an error.
-    JobFailed { job_id: JobId, error: String },
+    JobFailed {
+        #[schema(value_type=String, format=Uuid)]
+        job_id: JobId,
+        error: String,
+    },
 }
 
 /// Service trait defining the public engine API.

@@ -60,6 +60,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if !directory.is_absolute() {return Err("OKYTES_DATA_DIR must be absolute".into());}
             std::fs::create_dir_all(&directory)?;
             let destination = std::env::var_os("OKYTES_DOWNLOAD_DIR").map(std::path::PathBuf::from).unwrap_or(app.path().download_dir()?);
+            let service: Service = if let Some(client)=okytes_daemon_api::Client::from_environment()? {
+                Arc::new(client)
+            } else {
             let session = tauri::async_runtime::block_on(Session::open(
                 &directory.join("okytes.db"),
                 &destination,
@@ -73,7 +76,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     Err(_) => tracing::warn!("browser bridge could not start; browser downloads remain available"),
                 }
             }
-            let service: Service = session;
+            session
+            };
             app.manage(service.clone());
             let handle = app.handle().clone();
             let notifications = service.clone();

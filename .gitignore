@@ -54,6 +54,8 @@ coverage/
 # Secrets, signing keys and certificates
 *.pem
 *.key
+*.token
+browser-token.json
 *.p12
 *.pfx
 *.jks

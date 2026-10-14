@@ -10,7 +10,7 @@ pub const MAX_FRAME: usize = 128 * 1024;
 pub const HOST_NAME: &str = "org.okytes.bridge";
 
 /// Explicit one-download session handoff; values remain memory-only.
-#[derive(Clone, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../../extensions/shared/generated/")]
 pub struct Capture {
@@ -25,7 +25,7 @@ pub struct Capture {
 }
 
 /// Operations available to browser clients. No arbitrary queue/admin access.
-#[derive(Clone, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[serde(tag = "kind", content = "value", deny_unknown_fields)]
 #[ts(export, export_to = "../../../extensions/shared/generated/")]
 pub enum Operation {
@@ -36,7 +36,7 @@ pub enum Operation {
 }
 
 /// Idempotency ID survives reconnects; protocol version is checked by Rust.
-#[derive(Clone, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../../extensions/shared/generated/")]
 pub struct Request {
@@ -49,7 +49,7 @@ pub struct Request {
 }
 
 /// Sanitized acknowledgement; contains neither URL nor credentials.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../../extensions/shared/generated/")]
 pub struct Response {

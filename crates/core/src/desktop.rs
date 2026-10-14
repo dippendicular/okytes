@@ -7,8 +7,24 @@ use ts_rs::TS;
 /// Object-safe asynchronous service result.
 pub type Reply<'a, T> = Pin<Box<dyn Future<Output = EngineResult<T>> + Send + 'a>>;
 
+/// Advanced single-job creation shared by embedded and daemon clients.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Submit {
+    /// HTTP(S) URL without userinfo.
+    pub url: String,
+    /// Absolute override; null uses service preferences.
+    pub destination: Option<String>,
+    /// Optional safe basename.
+    pub filename: Option<String>,
+    /// Optional publisher SHA-256.
+    pub sha256: Option<String>,
+    /// rename, fail or overwrite.
+    pub conflict: String,
+}
+
 /// Persisted presentation and queue settings.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct Settings {
     /// Schema version, currently one.
@@ -24,7 +40,7 @@ pub struct Settings {
 }
 
 /// Validated batch creation input, limited to 100 URLs.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct AddInput {
     /// URLs, maximum 8192 bytes each.
@@ -36,7 +52,7 @@ pub struct AddInput {
 }
 
 /// Queue control request; payload validation belongs to the service.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 #[serde(tag = "kind", content = "value")]
 pub enum Action {
@@ -57,7 +73,7 @@ pub enum Action {
 }
 
 /// Display metadata and durable progress for one job.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct Job {
     /// UUID.
@@ -95,7 +111,7 @@ pub struct Job {
 }
 
 /// Segment diagnostic; byte offsets never exceed the engine's u64 bounds.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct Segment {
     /// Inclusive first byte.
@@ -109,7 +125,7 @@ pub struct Segment {
 }
 
 /// Bounded snapshot page; clients replace pages after a missed update.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct Snapshot {
     /// Monotonic session revision, serialized as a string.
@@ -122,6 +138,8 @@ pub struct Snapshot {
 
 /// GUI-independent management contract for an embedded engine or future daemon.
 pub trait DesktopService: Send + Sync {
+    /// Add one advanced request, preserving CLI options across backends.
+    fn submit(&self, input: Submit) -> Reply<'_, String>;
     /// Pause the runnable queue with one admission lock and wait for all workers.
     fn pause_all(&self) -> Reply<'_, ()>;
     /// Add a bounded batch; reject duplicates unless explicitly allowed.

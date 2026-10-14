@@ -44,7 +44,15 @@ async fn main() {
             Response::reply(request.id, Err("invalid_request".into()))
         } else {
             let id = request.id.clone();
-            match forward(&directory, request).await {
+            let result = match okytes_daemon_api::Client::from_environment() {
+                Ok(Some(client)) => client
+                    .capture(request)
+                    .await
+                    .map_err(|_| std::io::Error::other("daemon unavailable")),
+                Ok(None) => forward(&directory, request).await,
+                Err(_) => Err(std::io::Error::other("invalid daemon configuration")),
+            };
+            match result {
                 Ok(response) => response,
                 Err(_) => Response::reply(id, Err("app_unavailable".into())),
             }

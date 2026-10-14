@@ -46,6 +46,16 @@ jobs:
           pnpm test
           pnpm build
       - run: cargo fmt --all -- --check
+      - name: Daemon contract and SDK checks
+        run: |
+          cargo test -p okytes-daemon --test contract --locked
+          pnpm --dir packages/sdk-typescript install --frozen-lockfile
+          pnpm --dir packages/sdk-typescript generate
+          git diff --exit-code -- packages/sdk-typescript/src/schema.ts
+          pnpm --dir packages/sdk-typescript typecheck
+          pnpm --dir packages/sdk-typescript build
+          pnpm --dir packages/sdk-typescript test
+          cargo test -p okytes-daemon --test sdk --locked -- --ignored
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - uses: EmbarkStudios/cargo-deny-action@v2

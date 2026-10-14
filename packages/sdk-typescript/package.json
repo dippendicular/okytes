@@ -1,0 +1,22 @@
+{
+  "name": "@okytes/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "packageManager": "pnpm@11.11.0",
+  "scripts": {
+    "generate": "openapi-typescript ../../apps/daemon/api/openapi-v1.json -o src/schema.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "node --test tests/client.test.mjs"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.14.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.0.0",
+    "typescript": "^5.9.0"
+  }
+}

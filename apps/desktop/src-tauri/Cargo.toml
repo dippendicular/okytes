@@ -16,6 +16,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 okytes-core.workspace = true
 okytes-desktop-service = { version = "=0.1.0", path = "../service" }
+okytes-daemon-api = { version = "=0.1.0", path = "../../../crates/daemon-api" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

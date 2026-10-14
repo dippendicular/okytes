@@ -16,7 +16,7 @@ use uuid::Uuid;
 /// State of a download job.
 ///
 /// Transitions are validated by [`JobState::transition`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum JobState {
     /// Job is queued, waiting to start.
     Queued,
@@ -128,7 +128,7 @@ impl std::fmt::Display for JobState {
 /// State of a download segment (a byte-range worker).
 ///
 /// Transitions are validated by [`SegmentState::transition`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum SegmentState {
     /// Segment is pending, waiting to be assigned a worker.
     Pending,

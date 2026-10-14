@@ -22,6 +22,7 @@ use tokio::{sync::Mutex, task::JoinHandle};
 use uuid::Uuid;
 
 struct Queue {
+    stopping: bool,
     tasks: HashMap<JobId, JoinHandle<()>>,
     settings: Settings,
     samples: HashMap<JobId, (Instant, u64, f64)>,
@@ -30,6 +31,7 @@ struct Queue {
 
 /// Owns the process lease, engine and bounded worker set for the app lifetime.
 pub struct Session {
+    database_path: PathBuf,
     engine: Arc<Engine>,
     store: Arc<SqliteStore>,
     queue: Mutex<Queue>,
@@ -52,6 +54,79 @@ fn id(value: &str) -> EngineResult<JobId> {
 }
 
 impl Session {
+    /// Full engine metadata for CLI compatibility; session headers are omitted.
+    pub async fn engine_record(&self, id: JobId) -> EngineResult<JobRecord> {
+        self.engine.status(id).await
+    }
+    /// Bounded legacy CLI history page.
+    pub async fn engine_page(&self, offset: usize) -> EngineResult<Vec<JobRecord>> {
+        self.store.page(offset).await
+    }
+    /// Persisted engine configuration; transport changes apply on next startup.
+    pub async fn configuration(&self) -> EngineResult<okytes_core::types::EngineConfig> {
+        let queue = self.queue.lock().await;
+        let mut config = self.store.config().await?;
+        config.database_path = self.database_path.clone();
+        config.max_concurrent_jobs = queue.settings.concurrency as usize;
+        config.default_output_dir = PathBuf::from(&queue.settings.destination);
+        Ok(config)
+    }
+    /// Validate configuration without allowing it to redirect this profile's DB.
+    pub async fn set_configuration(
+        &self,
+        mut config: okytes_core::types::EngineConfig,
+    ) -> EngineResult<()> {
+        config.validate()?;
+        let mut queue = self.queue.lock().await;
+        let mut settings = queue.settings.clone();
+        settings.concurrency = config.max_concurrent_jobs as u32;
+        settings.destination = config.default_output_dir.to_string_lossy().into_owned();
+        validate_settings(&settings)?;
+        std::fs::create_dir_all(&config.default_output_dir)
+            .map_err(|_| invalid("cannot create destination"))?;
+        config.database_path = self.database_path.clone();
+        self.store
+            .set_preferences(vec![
+                (
+                    "engine".into(),
+                    serde_json::to_string(&config).map_err(|_| invalid("invalid configuration"))?,
+                ),
+                (
+                    "desktop-v1".into(),
+                    serde_json::to_string(&settings).map_err(|_| invalid("invalid settings"))?,
+                ),
+            ])
+            .await?;
+        queue.settings = settings;
+        Ok(())
+    }
+    /// Stop admission, drain durable writes and requeue interrupted jobs. Jobs
+    /// explicitly paused by the user remain paused across daemon shutdown.
+    pub async fn shutdown(&self) -> EngineResult<()> {
+        let mut queue = self.queue.lock().await;
+        queue.stopping = true;
+        let ids: Vec<_> = queue.tasks.keys().copied().collect();
+        let mut resume = Vec::new();
+        for id in &ids {
+            let job = self.engine.status(*id).await?;
+            if (job.state.is_active() || job.state == JobState::Queued)
+                && self.engine.pause(*id).await.is_ok()
+            {
+                resume.push(*id);
+            }
+        }
+        for id in ids {
+            if let Some(task) = queue.tasks.remove(&id) {
+                task.await.map_err(|_| invalid("worker shutdown failed"))?;
+            }
+        }
+        for id in resume {
+            if self.engine.status(id).await?.state == JobState::Paused {
+                self.engine.resume(id).await?;
+            }
+        }
+        Ok(())
+    }
     /// Accept one validated browser capture under the same admission lock as UI
     /// controls. Its request UUID is the durable job UUID, so reconnect retries
     /// cannot create duplicate jobs, including after a desktop restart.
@@ -119,9 +194,11 @@ impl Session {
             Arc::new(LocalFiles),
         )?);
         let session = Arc::new(Self {
+            database_path: database.into(),
             engine,
             store,
             queue: Mutex::new(Queue {
+                stopping: false,
                 tasks: HashMap::new(),
                 settings,
                 samples: HashMap::new(),
@@ -270,6 +347,9 @@ impl okytes_browser_bridge::Handler for Session {
 
 async fn admit(session: &Arc<Session>) -> EngineResult<()> {
     let mut queue = session.queue.lock().await;
+    if queue.stopping {
+        return Ok(());
+    }
     queue.tasks.retain(|_, task| !task.is_finished());
     let limit = queue.settings.concurrency as usize;
     if queue.tasks.len() >= limit {
@@ -311,6 +391,45 @@ fn validate_settings(settings: &Settings) -> EngineResult<()> {
 }
 
 impl DesktopService for Session {
+    fn submit(&self, input: okytes_core::desktop::Submit) -> Reply<'_, String> {
+        Box::pin(async move {
+            let queue = self.queue.lock().await;
+            if queue.stopping {
+                return Err(invalid("service is shutting down"));
+            }
+            let destination = input
+                .destination
+                .unwrap_or_else(|| queue.settings.destination.clone());
+            if destination.len() > 4096 || !Path::new(&destination).is_absolute() {
+                return Err(invalid("absolute destination required"));
+            }
+            let url = url::Url::parse(&input.url).map_err(|_| invalid("invalid source URL"))?;
+            if input.filename.as_ref().is_some_and(|name| {
+                name.len() > 200 || name != &okytes_core::engine::sanitize(name)
+            }) {
+                return Err(invalid("safe basename required"));
+            }
+            let conflict_strategy = match input.conflict.as_str() {
+                "rename" => ConflictStrategy::Rename,
+                "fail" => ConflictStrategy::Fail,
+                "overwrite" => ConflictStrategy::Overwrite,
+                _ => return Err(invalid("invalid conflict strategy")),
+            };
+            let id = self
+                .engine
+                .add(DownloadRequest {
+                    url,
+                    output_dir: PathBuf::from(destination),
+                    filename: input.filename,
+                    expected_hash: input.sha256,
+                    conflict_strategy,
+                    headers: vec![],
+                    priority: 0,
+                })
+                .await?;
+            Ok(id.to_string())
+        })
+    }
     fn pause_all(&self) -> Reply<'_, ()> {
         Box::pin(async move {
             let mut queue = self.queue.lock().await;

@@ -1,0 +1,17 @@
+[Unit]
+Description=Okytes download daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/okytes-daemon --data-dir %h/.local/share/okytes-daemon
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

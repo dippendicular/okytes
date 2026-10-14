@@ -10,6 +10,8 @@ members = [
     "apps/desktop/src-tauri",
     "crates/browser-bridge",
     "apps/native-host",
+    "crates/daemon-api",
+    "apps/daemon",
 ]
 
 [workspace.package]
@@ -25,6 +27,7 @@ tokio = { version = "1", features = ["full"] }
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+utoipa = { version = "5", features = ["chrono", "uuid"] }
 
 # Persistence
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }

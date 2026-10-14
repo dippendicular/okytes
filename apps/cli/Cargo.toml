@@ -6,6 +6,8 @@ license.workspace = true
 description = "Command-line interface for Okytes download manager"
 
 [dependencies]
+okytes-daemon-api = { version = "=0.1.0", path = "../../crates/daemon-api" }
+reqwest.workspace = true
 okytes-core.workspace = true
 okytes-transport-http.workspace = true
 okytes-persistence.workspace = true
@@ -22,5 +24,9 @@ chrono.workspace = true
 futures.workspace = true
 
 [dev-dependencies]
+okytes-browser-bridge = { version = "=0.1.0", path = "../../crates/browser-bridge" }
+okytes-daemon = { version = "=0.1.0", path = "../daemon" }
+axum-server = "0.8"
+hyper-util.workspace = true
 okytes-test-support.workspace = true
 tempfile.workspace = true

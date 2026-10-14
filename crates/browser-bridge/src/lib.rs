@@ -43,6 +43,20 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid bridge message")
 }
 
+/// Create a new small secret file with the same native protection as the browser
+/// installation token. No replacement, symlink following or secret logging.
+pub fn write_secret(path: &Path, value: &[u8]) -> io::Result<()> {
+    if value.is_empty() || value.len() > 512 {
+        return Err(invalid());
+    }
+    platform::write_private(path, value)
+}
+
+/// Read a protected small secret file; callers never include its value in errors.
+pub fn read_secret(path: &Path) -> io::Result<Vec<u8>> {
+    platform::read_private(path)
+}
+
 /// Read little-endian native framing, bounded before allocation. A partial length
 /// or body is malformed; clean EOF before a new length ends the connection.
 pub async fn read_frame<T: DeserializeOwned>(
