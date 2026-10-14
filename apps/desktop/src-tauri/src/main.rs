@@ -64,6 +64,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &directory.join("okytes.db"),
                 &destination,
             ))?;
+            // IPC exists only after the per-user host installer provisions its
+            // token. The listener owns a service reference, never a host process.
+            if directory.join("browser-token.json").exists() {
+                let handler: Arc<dyn okytes_browser_bridge::Handler> = session.clone();
+                match tauri::async_runtime::block_on(okytes_browser_bridge::serve(&directory, handler)) {
+                    Ok(listener) => { app.manage(listener); }
+                    Err(_) => tracing::warn!("browser bridge could not start; browser downloads remain available"),
+                }
+            }
             let service: Service = session;
             app.manage(service.clone());
             let handle = app.handle().clone();

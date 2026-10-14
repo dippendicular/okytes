@@ -139,6 +139,12 @@ pub struct DownloadRequest {
 /// Persistent metadata for a download job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
+    /// Browser request id for durable idempotency, never a credential.
+    #[serde(default)]
+    pub capture_id: Option<JobId>,
+    /// Requires memory-only browser session headers; fail after session loss.
+    #[serde(default)]
+    pub requires_session: bool,
     /// Use a sanitized server filename suggestion during the initial probe.
     #[serde(default)]
     pub use_server_filename: bool,
@@ -164,6 +170,7 @@ pub struct JobRecord {
     /// Conflict strategy.
     pub conflict_strategy: ConflictStrategy,
     /// Custom headers for this job.
+    #[serde(skip)]
     pub headers: Vec<(String, String)>,
     /// Priority (higher = sooner).
     pub priority: i32,

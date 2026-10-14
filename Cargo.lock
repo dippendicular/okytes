@@ -2682,6 +2682,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "okytes-browser-bridge"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "ts-rs",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "okytes-cli"
 version = "0.1.0"
 dependencies = [
@@ -2728,6 +2745,7 @@ dependencies = [
 name = "okytes-desktop"
 version = "0.1.0"
 dependencies = [
+ "okytes-browser-bridge",
  "okytes-core",
  "okytes-desktop-service",
  "tauri",
@@ -2742,6 +2760,7 @@ dependencies = [
 name = "okytes-desktop-service"
 version = "0.1.0"
 dependencies = [
+ "okytes-browser-bridge",
  "okytes-core",
  "okytes-persistence",
  "okytes-test-support",
@@ -2752,6 +2771,22 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "okytes-native-host"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "okytes-browser-bridge",
+ "okytes-core",
+ "okytes-desktop-service",
+ "okytes-test-support",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
  "uuid",
 ]
 

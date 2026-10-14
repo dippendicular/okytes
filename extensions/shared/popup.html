@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Okytes</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <h1>Okytes</h1>
+    <p id="status" role="status">Checking desktop connection…</p>
+    <label for="urls">Download links</label
+    ><textarea id="urls" rows="6" placeholder="One link per line"></textarea>
+    <button id="send">Send to Okytes</button
+    ><button id="collect">Collect page links</button>
+    <button id="media">Detect media manifests</button
+    ><button id="settings">Settings</button>
+    <p>
+      Detected manifests are candidates only. Media extraction is not supported.
+    </p>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -41,6 +41,8 @@ impl Default for ServerConfig {
 /// Bounded request observation for protocol assertions.
 #[derive(Clone, Debug)]
 pub struct ObservedRequest {
+    /// Session presence only; credential values are never retained in history.
+    pub has_session: bool,
     /// Received path.
     pub path: String,
     /// Received If-Range value.
@@ -212,6 +214,8 @@ async fn handle_request(
     if let Ok(mut requests) = state.requests.lock() {
         if requests.len() < 1024 {
             requests.push(ObservedRequest {
+                has_session: req.headers().contains_key("cookie")
+                    || req.headers().contains_key("authorization"),
                 path: path.clone(),
                 range: range.clone(),
                 if_range: if_range.clone(),
@@ -221,7 +225,32 @@ async fn handle_request(
     if path == "/redirect" {
         return Ok(response(302, vec![("location", "/normal".into())], empty()));
     }
+    if path == "/cross-origin" {
+        if let Some(target) = req
+            .uri()
+            .query()
+            .and_then(|query| query.strip_prefix("to="))
+        {
+            return Ok(response(302, vec![("location", target.into())], empty()));
+        }
+    }
+    if path == "/browser-page" {
+        let html = Bytes::from_static(b"<!doctype html><html><title>Okytes browser fixture</title><body><a id='auto' href='/browser-auto.zip' download>Automatic download</a><a id='fallback' href='/fallback.zip' download>Fallback download</a><a href='/sample.m3u8'>Manifest candidate</a></body></html>");
+        let body = http_body_util::Full::new(html)
+            .map_err(|never: Infallible| match never {})
+            .boxed_unsync();
+        return Ok(response(
+            200,
+            vec![("content-type", "text/html; charset=utf-8".into())],
+            body,
+        ));
+    }
     if path == "/expired" {
+        return Ok(response(403, vec![], empty()));
+    }
+    if path == "/session-protected"
+        && (!req.headers().contains_key("cookie") || !req.headers().contains_key("authorization"))
+    {
         return Ok(response(403, vec![], empty()));
     }
     if path == "/head-unsupported" && req.method() == Method::HEAD {
@@ -266,6 +295,7 @@ async fn handle_request(
         }
     }
     let mut headers = vec![
+        ("content-type", "application/octet-stream".into()),
         ("etag", etag),
         ("last-modified", "Wed, 14 Oct 2026 00:00:00 GMT".into()),
     ];

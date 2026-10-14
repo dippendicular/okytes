@@ -8,6 +8,8 @@ use proptest::prelude::*;
 use uuid::Uuid;
 fn job(id: Uuid) -> JobRecord {
     JobRecord {
+        capture_id: None,
+        requires_session: false,
         use_server_filename: false,
         verified_sha256: None,
         id,

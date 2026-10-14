@@ -99,12 +99,7 @@ impl HttpTransport {
                 ) {
                     return Err(request_error(&target, "reserved download header"));
                 }
-                if target.origin() != url.origin()
-                    && matches!(
-                        name.as_str(),
-                        "authorization" | "cookie" | "proxy-authorization"
-                    )
-                {
+                if target.origin() != url.origin() {
                     continue;
                 }
                 map.insert(

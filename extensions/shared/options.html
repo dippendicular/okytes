@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Okytes browser settings</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Browser integration</h1>
+      <p>
+        Automatic capture is off by default. A browser transfer is cancelled
+        only after Okytes accepts it.
+      </p>
+      <form id="rules">
+        <label
+          ><input id="enabled" type="checkbox" /> Capture matching downloads
+          automatically</label
+        >
+        <label for="allow">Allowed domains (empty means any domain)</label
+        ><textarea id="allow" rows="2"></textarea>
+        <label for="deny">Denied domains (always take precedence)</label
+        ><textarea id="deny" rows="2"></textarea>
+        <label for="types"
+          >File extensions, separated by spaces (empty means any type)</label
+        ><input id="types" placeholder="zip pdf iso" />
+        <label for="min">Minimum bytes (0 means no minimum)</label
+        ><input id="min" type="number" min="0" value="0" />
+        <label for="max">Maximum bytes (0 means no maximum)</label
+        ><input id="max" type="number" min="0" value="0" />
+        <button type="submit">Save rules</button>
+      </form>
+      <h2>Optional site access</h2>
+      <p>
+        Allow one origin to hand off session cookies and observed authorization
+        headers, detect requested manifest URLs, and use Alt-click to bypass
+        capture. No cookies or headers are saved.
+      </p>
+      <label for="origin">Site origin</label
+      ><input id="origin" placeholder="https://example.com" /><button
+        id="grant"
+      >
+        Allow this site
+      </button>
+      <p>
+        Unknown file sizes bypass size-restricted capture. Revoke optional
+        access in your browser's extension settings.
+      </p>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

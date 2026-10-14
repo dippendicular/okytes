@@ -19,4 +19,5 @@ okytes-desktop-service = { version = "=0.1.0", path = "../service" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+okytes-browser-bridge = { version = "=0.1.0", path = "../../../crates/browser-bridge" }
 

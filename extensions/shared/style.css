@@ -1,0 +1,42 @@
+:root {
+  font:
+    15px/1.5 system-ui,
+    sans-serif;
+  color-scheme: light dark;
+}
+body {
+  margin: 20px;
+  min-width: 340px;
+  max-width: 680px;
+}
+h1 {
+  font-size: 22px;
+}
+h2 {
+  font-size: 18px;
+  margin-top: 28px;
+}
+label {
+  display: block;
+  margin-top: 12px;
+}
+textarea,
+input:not([type="checkbox"]) {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+  font: inherit;
+}
+button {
+  margin: 10px 6px 0 0;
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+:focus-visible {
+  outline: 3px solid #397ed6;
+  outline-offset: 3px;
+}
+#status {
+  font-weight: 600;
+}

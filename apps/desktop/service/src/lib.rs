@@ -52,6 +52,46 @@ fn id(value: &str) -> EngineResult<JobId> {
 }
 
 impl Session {
+    /// Accept one validated browser capture under the same admission lock as UI
+    /// controls. Its request UUID is the durable job UUID, so reconnect retries
+    /// cannot create duplicate jobs, including after a desktop restart.
+    pub async fn capture(
+        &self,
+        request_id: String,
+        capture: okytes_browser_bridge::protocol::Capture,
+    ) -> EngineResult<String> {
+        let request = okytes_browser_bridge::protocol::Request {
+            version: 1,
+            id: request_id.clone(),
+            operation: okytes_browser_bridge::protocol::Operation::Capture(capture.clone()),
+        };
+        request.validate().map_err(invalid)?;
+        let id = id(&request_id)?;
+        let mut queue = self.queue.lock().await;
+        if let Some(job) = self.store.load_job(id).await? {
+            if job.capture_id == Some(id) {
+                return Ok(id.to_string());
+            }
+            return Err(invalid("request ID collision"));
+        }
+        let result = self
+            .engine
+            .add_captured(
+                DownloadRequest {
+                    url: url::Url::parse(&capture.url).map_err(|_| invalid("invalid source"))?,
+                    output_dir: PathBuf::from(&queue.settings.destination),
+                    filename: capture.filename,
+                    expected_hash: capture.sha256,
+                    conflict_strategy: ConflictStrategy::Rename,
+                    headers: capture.headers,
+                    priority: 0,
+                },
+                id,
+            )
+            .await?;
+        queue.revision += 1;
+        Ok(result.to_string())
+    }
     /// Open durable history and recover interrupted transfers with exclusive ownership.
     pub async fn open(database: &Path, destination: &Path) -> EngineResult<Arc<Self>> {
         let store = Arc::new(SqliteStore::open(database)?);
@@ -176,6 +216,7 @@ impl Session {
                 .map_err(|e| invalid(format!("worker failed: {e}")))?;
         }
         if cancel {
+            self.engine.forget_session(job.id);
             match tokio::fs::remove_file(&job.partial_path).await {
                 Ok(()) => (),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -197,6 +238,33 @@ async fn runner(session: Weak<Session>) {
         if let Err(e) = admit(&session).await {
             tracing::error!(error=%e, "queue admission failed");
         }
+    }
+}
+
+impl okytes_browser_bridge::Handler for Session {
+    fn handle(
+        &self,
+        request: okytes_browser_bridge::protocol::Request,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = okytes_browser_bridge::protocol::Response> + Send + '_,
+        >,
+    > {
+        Box::pin(async move {
+            use okytes_browser_bridge::protocol::{Operation, Response};
+            if request.validate().is_err() {
+                return Response::reply(request.id, Err("invalid_request".into()));
+            }
+            let result = match request.operation {
+                Operation::Ping => Ok(None),
+                Operation::Capture(capture) => self
+                    .capture(request.id.clone(), capture)
+                    .await
+                    .map(Some)
+                    .map_err(|_| "capture_rejected".into()),
+            };
+            Response::reply(request.id, result)
+        })
     }
 }
 
@@ -388,6 +456,9 @@ impl DesktopService for Session {
                     self.engine.resume(id).await?;
                 }
                 Action::Restart => {
+                    if job.requires_session {
+                        return Err(invalid("Capture this download again from the browser to supply a fresh session"));
+                    }
                     self.stop(&job, &mut queue, true).await?;
                     let directory = job
                         .output_path

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Okytes Download Manager",
+  "version": "0.1.0",
+  "description": "Send downloads to Okytes with browser fallback and explicit site permissions.",
+  "permissions": [
+    "nativeMessaging",
+    "downloads",
+    "menus",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "optional_permissions": ["cookies", "webRequest"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "scripts": ["background.js"] },
+  "action": { "default_popup": "popup.html", "default_title": "Okytes" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "okytes@okytes.org",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  }
+}

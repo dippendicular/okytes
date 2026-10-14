@@ -1,0 +1,19 @@
+[package]
+name = "okytes-native-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+okytes-browser-bridge = { version = "=0.1.0", path = "../../crates/browser-bridge" }
+tokio.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+okytes-desktop-service = { version = "=0.1.0", path = "../desktop/service" }
+okytes-test-support.workspace = true
+okytes-core.workspace = true
+uuid.workspace = true
+sha2.workspace = true

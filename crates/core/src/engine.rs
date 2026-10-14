@@ -44,6 +44,7 @@ pub struct Engine {
     responses: Mutex<HashMap<JobId, (u16, f64)>>,
     full_progress: Mutex<HashMap<JobId, u64>>,
     workers: Mutex<HashMap<JobId, u32>>,
+    sessions: Mutex<HashMap<JobId, Vec<(String, String)>>>,
 }
 struct Active<'a> {
     ids: &'a Mutex<HashSet<JobId>>,
@@ -104,7 +105,131 @@ impl Engine {
             responses: Mutex::new(HashMap::new()),
             full_progress: Mutex::new(HashMap::new()),
             workers: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
         })
+    }
+    /// Add a browser job using its request UUID for durable idempotency. Only the
+    /// authenticated queue owner may call this after checking existing records.
+    pub async fn add_captured(&self, request: DownloadRequest, id: JobId) -> EngineResult<JobId> {
+        self.add_request(request, Some(id)).await
+    }
+    /// Drop memory-only credentials after cancellation, removal or completion.
+    pub fn forget_session(&self, id: JobId) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.remove(&id);
+        }
+    }
+    fn session_headers(&self, job: &JobRecord) -> EngineResult<Vec<(String, String)>> {
+        if !job.requires_session {
+            return Ok(vec![]);
+        }
+        self.sessions
+            .lock()
+            .map_err(|_| EngineError::Config("session lock failed".into()))?
+            .get(&job.id)
+            .cloned()
+            .ok_or_else(|| {
+                EngineError::Config(
+                    "Browser session expired; capture this download again from the browser".into(),
+                )
+            })
+    }
+    async fn add_request(
+        &self,
+        request: DownloadRequest,
+        capture_id: Option<JobId>,
+    ) -> EngineResult<JobId> {
+        if request.headers.len() > 16
+            || request
+                .headers
+                .iter()
+                .map(|(n, v)| n.len() + v.len())
+                .sum::<usize>()
+                > 32768
+            || request.headers.iter().any(|(name, value)| {
+                !matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "cookie" | "authorization" | "referer" | "user-agent" | "accept"
+                ) || !value.is_ascii()
+                    || value.bytes().any(|b| b < 32 || b == 127)
+            })
+        {
+            return Err(EngineError::Config("invalid session headers".into()));
+        }
+
+        if !matches!(request.url.scheme(), "http" | "https")
+            || !request.url.username().is_empty()
+            || request.url.password().is_some()
+        {
+            return Err(EngineError::Config(
+                "HTTP(S) URL without embedded credentials required".into(),
+            ));
+        }
+        if request.url.as_str().len() > 8192 {
+            return Err(EngineError::Config("URL exceeds 8192 bytes".into()));
+        }
+        if request
+            .expected_hash
+            .as_ref()
+            .is_some_and(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err(EngineError::Config(
+                "SHA-256 must be 64 hex characters".into(),
+            ));
+        }
+        tokio::fs::create_dir_all(&request.output_dir)
+            .await
+            .map_err(|e| io(&request.output_dir, e))?;
+        let dir = tokio::fs::canonicalize(&request.output_dir)
+            .await
+            .map_err(|e| io(&request.output_dir, e))?;
+        let name = sanitize(
+            request
+                .filename
+                .as_deref()
+                .unwrap_or_else(|| request.url.path().rsplit('/').next().unwrap_or("download")),
+        );
+        let output_path = resolve_conflict(&dir.join(name), request.conflict_strategy)?;
+        let id = capture_id.unwrap_or_else(Uuid::new_v4);
+        let requires_session = !request.headers.is_empty();
+        if requires_session {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| EngineError::Config("session lock failed".into()))?;
+            if sessions.len() >= 128 {
+                return Err(EngineError::Config("browser session limit reached".into()));
+            }
+            sessions.insert(id, request.headers);
+        }
+        let partial_path = dir.join(format!(".{id}.okytes.part"));
+        let job = JobRecord {
+            capture_id,
+            requires_session,
+            use_server_filename: request.filename.is_none(),
+            verified_sha256: None,
+            id,
+            url: request.url,
+            output_path,
+            partial_path,
+            total_size: None,
+            remote_identity: RemoteIdentity::empty(),
+            state: JobState::Queued,
+            expected_hash: request.expected_hash,
+            conflict_strategy: request.conflict_strategy,
+            headers: vec![],
+            priority: request.priority,
+            bytes_downloaded: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            retry_count: 0,
+            error_message: None,
+        };
+        if let Err(error) = self.store.save_job(&job).await {
+            self.forget_session(id);
+            return Err(error);
+        }
+        Ok(id)
     }
     /// Last successful response status and time to headers, retained for at most 256 jobs.
     pub fn response_diagnostic(&self, id: JobId) -> Option<(u16, f64)> {
@@ -228,15 +353,19 @@ impl Engine {
         if self.status(id).await?.state == JobState::Cancelled {
             remove_partial(&self.status(id).await?.partial_path).await?;
         }
+        if self.status(id).await?.state.is_terminal() {
+            self.forget_session(id);
+        }
         result
     }
     async fn probe(&self, job: &JobRecord) -> EngineResult<crate::transport::ProbeResult> {
+        let headers = self.session_headers(job)?;
         for attempt in 0..=self.config.max_retries {
             if !self.running(job.id).await? {
                 return Err(EngineError::Scheduler("job interrupted".into()));
             }
             let Some(result) = self
-                .controlled(job.id, self.transport.probe(&job.url, &job.headers))
+                .controlled(job.id, self.transport.probe(&job.url, &headers))
                 .await?
             else {
                 return Err(EngineError::Scheduler("job interrupted".into()));
@@ -522,6 +651,7 @@ impl Engine {
         mut segment: SegmentRecord,
     ) -> EngineResult<(SegmentRecord, u64)> {
         let _worker = self.worker(job.id)?;
+        let headers = self.session_headers(job)?;
         let before = segment.bytes_downloaded;
         let end = segment.end.min(
             segment
@@ -538,7 +668,7 @@ impl Engine {
                     job.id,
                     self.transport.fetch(
                         &job.url,
-                        &job.headers,
+                        &headers,
                         Some((segment.current_offset(), end)),
                         &job.remote_identity,
                     ),
@@ -681,6 +811,7 @@ impl Engine {
         Ok(())
     }
     async fn full(&self, job: &JobRecord) -> EngineResult<()> {
+        let headers = self.session_headers(job)?;
         let _worker = self.worker(job.id)?;
         if let Ok(mut progress) = self.full_progress.lock() {
             progress.insert(job.id, 0);
@@ -692,7 +823,7 @@ impl Engine {
             .controlled(
                 job.id,
                 self.transport
-                    .fetch(&job.url, &job.headers, None, &job.remote_identity),
+                    .fetch(&job.url, &headers, None, &job.remote_identity),
             )
             .await?
         else {
@@ -880,63 +1011,7 @@ fn resolve_conflict(path: &Path, strategy: ConflictStrategy) -> EngineResult<Pat
 }
 impl DownloadService for Engine {
     fn add(&self, request: DownloadRequest) -> ServiceFuture<'_, JobId> {
-        Box::pin(async move {
-            if !matches!(request.url.scheme(), "http" | "https")
-                || !request.url.username().is_empty()
-                || request.url.password().is_some()
-            {
-                return Err(EngineError::Config(
-                    "HTTP(S) URL without embedded credentials required".into(),
-                ));
-            }
-            if request.url.as_str().len() > 8192 || !request.headers.is_empty() {
-                return Err(EngineError::Config("URL exceeds 8192 bytes or session headers are unavailable in M1; credentials are never persisted".into()));
-            }
-            if request
-                .expected_hash
-                .as_ref()
-                .is_some_and(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()))
-            {
-                return Err(EngineError::Config(
-                    "SHA-256 must be 64 hex characters".into(),
-                ));
-            }
-            tokio::fs::create_dir_all(&request.output_dir)
-                .await
-                .map_err(|e| io(&request.output_dir, e))?;
-            let dir = tokio::fs::canonicalize(&request.output_dir)
-                .await
-                .map_err(|e| io(&request.output_dir, e))?;
-            let name =
-                sanitize(request.filename.as_deref().unwrap_or_else(|| {
-                    request.url.path().rsplit('/').next().unwrap_or("download")
-                }));
-            let output_path = resolve_conflict(&dir.join(name), request.conflict_strategy)?;
-            let id = Uuid::new_v4();
-            let partial_path = dir.join(format!(".{id}.okytes.part"));
-            let job = JobRecord {
-                use_server_filename: request.filename.is_none(),
-                verified_sha256: None,
-                id,
-                url: request.url,
-                output_path,
-                partial_path,
-                total_size: None,
-                remote_identity: RemoteIdentity::empty(),
-                state: JobState::Queued,
-                expected_hash: request.expected_hash,
-                conflict_strategy: request.conflict_strategy,
-                headers: request.headers,
-                priority: request.priority,
-                bytes_downloaded: 0,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                retry_count: 0,
-                error_message: None,
-            };
-            self.store.save_job(&job).await?;
-            Ok(id)
-        })
+        Box::pin(self.add_request(request, None))
     }
     fn pause(&self, id: JobId) -> ServiceFuture<'_, ()> {
         Box::pin(async move {

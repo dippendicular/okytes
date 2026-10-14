@@ -33,6 +33,18 @@ jobs:
           pnpm lint
           pnpm test
           pnpm build
+      - name: Check browser protocol bindings
+        run: |
+          cargo test -p okytes-browser-bridge --lib --locked protocol::export_bindings
+          git diff --exit-code -- extensions/shared/generated
+      - name: Browser extension checks
+        working-directory: extensions
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm lint
+          pnpm test
+          pnpm build
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
