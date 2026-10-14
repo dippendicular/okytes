@@ -6,6 +6,7 @@ AGENTS.md
 AGENTS.override.md
 
 # Rust / Cargo
+/vendor/
 /target/
 **/target/
 *.rs.bk
@@ -123,3 +124,7 @@ venv/
 .cache/
 *.tmp
 *.temp
+
+# Private torrent staging and interrupted atomic publication
+*.torrent-data/
+.okytes-torrent-*/

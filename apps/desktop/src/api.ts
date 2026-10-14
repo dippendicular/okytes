@@ -6,6 +6,21 @@ import type { Settings } from "../../../crates/core/bindings/Settings";
 import type { Snapshot } from "../../../crates/core/bindings/Snapshot";
 export type { Action, AddInput, Job, Settings, Snapshot };
 export const api = {
+  inspectTorrent: (
+    input: import("../../../crates/torrent-types/bindings/Input").Input,
+  ) =>
+    invoke<import("../../../crates/torrent-types/bindings/Metadata").Metadata>(
+      "inspect_torrent",
+      { input },
+    ),
+  addTorrent: (
+    input: import("../../../crates/torrent-types/bindings/Input").Input,
+  ) => invoke<string>("add_torrent", { input }),
+  torrent: (id: string) =>
+    invoke<import("../../../crates/torrent-types/bindings/Snapshot").Snapshot>(
+      "torrent",
+      { id },
+    ),
   pauseAll: () => invoke<void>("pause_all"),
   list: (offset = 0) => invoke<Snapshot>("list", { offset }),
   get: (id: string) => invoke<Job>("get", { id }),

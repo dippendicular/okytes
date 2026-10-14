@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.0",

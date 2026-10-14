@@ -9,6 +9,9 @@ description = "Command-line interface for Okytes download manager"
 okytes-daemon-api = { version = "=0.1.0", path = "../../crates/daemon-api" }
 reqwest.workspace = true
 okytes-core.workspace = true
+okytes-torrent-types.workspace = true
+okytes-transport-torrent.workspace = true
+base64 = "0.22"
 okytes-transport-http.workspace = true
 okytes-persistence.workspace = true
 anyhow.workspace = true

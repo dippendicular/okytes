@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { TorrentForm, TorrentDiagnostics } from "./Torrents";
 import { TrafficSettings, defaultTraffic } from "./TrafficSettings";
 import {
   api,
@@ -12,7 +13,7 @@ import {
   type Settings,
 } from "./api";
 
-const active = ["Probing", "Downloading", "Verifying"];
+const active = ["Probing", "Downloading", "Verifying", "Seeding"];
 const views = [
   "All downloads",
   "Active",
@@ -68,6 +69,7 @@ export function App() {
   const [filter, setFilter] = useState("All types");
   const [error, setError] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [torrentOpen, setTorrentOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>();
@@ -276,14 +278,19 @@ export function App() {
     >
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-icon">↓</span>
           <div>
-            Okytes<small>DOWNLOAD MANAGER</small>
+            <img
+              className="brand-logo"
+              src="/brand/okytes_logo_transperant.png"
+              alt="Okytes"
+            />
+            <small>DOWNLOAD MANAGER</small>
           </div>
         </div>
         <button className="primary add" onClick={() => setAddOpen(true)}>
           ＋ Add downloads
         </button>
+        <button onClick={() => setTorrentOpen(true)}>Add torrent</button>
         <nav aria-label="Download views">
           {views.map((name) => (
             <button
@@ -496,12 +503,12 @@ export function App() {
                     {(active.includes(job.state) || job.state === "Queued") && (
                       <button
                         disabled={busy}
-                        aria-label={`Pause ${job.name}`}
+                        aria-label={`${job.state === "Seeding" ? "Stop sharing" : "Pause"} ${job.name}`}
                         onClick={() => {
                           void act(job, { kind: "Pause" });
                         }}
                       >
-                        Pause
+                        {job.state === "Seeding" ? "Stop sharing" : "Pause"}
                       </button>
                     )}
                     {["Paused", "Failed"].includes(job.state) && (
@@ -645,6 +652,19 @@ export function App() {
         </form>
       </Modal>
       <Modal
+        title="Add torrent"
+        open={torrentOpen}
+        onOpenChange={setTorrentOpen}
+      >
+        <TorrentForm
+          destination={destination}
+          done={() => {
+            setTorrentOpen(false);
+            void refresh();
+          }}
+        />
+      </Modal>
+      <Modal
         error={error}
         title="Download details"
         open={!!selectedJob}
@@ -655,33 +675,40 @@ export function App() {
         {selectedJob && (
           <div className="details">
             <h3>{selectedJob.name}</h3>
+            {selectedJob.protocol === "torrent" && (
+              <TorrentDiagnostics id={selectedJob.id} />
+            )}
             <dl>
               <dt>Source</dt>
               <dd>{selectedJob.url}</dd>
               <dt>Destination</dt>
               <dd>{selectedJob.destination}</dd>
-              <dt>Strong ETag</dt>
-              <dd>
-                {selectedJob.etag ??
-                  "Unavailable — safe resume may restart from zero"}
-              </dd>
-              <dt>HTTP response</dt>
-              <dd>
-                {selectedJob.response_status ?? "Not sampled this session"}
-              </dd>
-              <dt>Time to headers</dt>
-              <dd>
-                {selectedJob.response_latency_ms === null
-                  ? "Not sampled this session"
-                  : `${selectedJob.response_latency_ms.toFixed(0)} ms (includes admission and redirects)`}
-              </dd>
-              <dt>Retries</dt>
-              <dd>{selectedJob.retries}</dd>
-              <dt>Workers / segments</dt>
-              <dd>
-                {selectedJob.workers} active / {selectedJob.segments.length}{" "}
-                total
-              </dd>
+              {selectedJob.protocol !== "torrent" && (
+                <>
+                  <dt>Strong ETag</dt>
+                  <dd>
+                    {selectedJob.etag ??
+                      "Unavailable — safe resume may restart from zero"}
+                  </dd>
+                  <dt>HTTP response</dt>
+                  <dd>
+                    {selectedJob.response_status ?? "Not sampled this session"}
+                  </dd>
+                  <dt>Time to headers</dt>
+                  <dd>
+                    {selectedJob.response_latency_ms === null
+                      ? "Not sampled this session"
+                      : `${selectedJob.response_latency_ms.toFixed(0)} ms (includes admission and redirects)`}
+                  </dd>
+                  <dt>Retries</dt>
+                  <dd>{selectedJob.retries}</dd>
+                  <dt>Workers / segments</dt>
+                  <dd>
+                    {selectedJob.workers} active / {selectedJob.segments.length}{" "}
+                    total
+                  </dd>
+                </>
+              )}
             </dl>
             {selectedJob.error && (
               <p role="alert" className="alert">
@@ -703,24 +730,25 @@ export function App() {
                 </div>
               ))}
             </div>
-            {["Paused", "Queued", "Failed"].includes(selectedJob.state) && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void act(selectedJob, { kind: "Rename", value: rename });
-                }}
-              >
-                <label>
-                  Filename
-                  <input
-                    value={rename}
-                    onChange={(e) => setRename(e.target.value)}
-                    maxLength={200}
-                  />
-                </label>
-                <button disabled={busy}>Rename</button>
-              </form>
-            )}
+            {selectedJob.protocol !== "torrent" &&
+              ["Paused", "Queued", "Failed"].includes(selectedJob.state) && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void act(selectedJob, { kind: "Rename", value: rename });
+                  }}
+                >
+                  <label>
+                    Filename
+                    <input
+                      value={rename}
+                      onChange={(e) => setRename(e.target.value)}
+                      maxLength={200}
+                    />
+                  </label>
+                  <button disabled={busy}>Rename</button>
+                </form>
+              )}
             {selectedJob.state === "Queued" && (
               <label>
                 Queue priority
@@ -743,14 +771,16 @@ export function App() {
               </label>
             )}
             <div className="actions">
-              <button
-                disabled={busy}
-                onClick={() => {
-                  void act(selectedJob, { kind: "Restart" });
-                }}
-              >
-                Download again
-              </button>
+              {selectedJob.protocol !== "torrent" && (
+                <button
+                  disabled={busy}
+                  onClick={() => {
+                    void act(selectedJob, { kind: "Restart" });
+                  }}
+                >
+                  Download again
+                </button>
+              )}
               {!["Completed", "Cancelled"].includes(selectedJob.state) && (
                 <button
                   disabled={busy}

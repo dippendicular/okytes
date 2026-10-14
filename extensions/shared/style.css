@@ -40,3 +40,15 @@ button {
 #status {
   font-weight: 600;
 }
+
+.brand {
+  display: inline-block;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.brand img {
+  display: block;
+  width: 180px;
+  height: auto;
+}

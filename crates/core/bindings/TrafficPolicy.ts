@@ -7,6 +7,14 @@ import type { ScheduleWindow } from "./ScheduleWindow";
  */
 export type TrafficPolicy = {
 /**
+ * Aggregate upload bytes/second for protocols that share files.
+ */
+upload_bps: number | null,
+/**
+ * Independent default upload cap for each sharing job.
+ */
+per_job_upload_bps: number | null,
+/**
  * Aggregate bytes/second across all jobs.
  */
 global_bps: number | null,

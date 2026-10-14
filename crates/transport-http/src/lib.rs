@@ -43,6 +43,7 @@ fn request_error(url: &Url, error: impl std::fmt::Display) -> TransportError {
 impl HttpTransport {
     /// Build a client with verified TLS and bounded per-origin connections.
     pub fn new(config: &EngineConfig) -> Result<Self, TransportError> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         config
             .validate()
             .map_err(|e| TransportError::Configuration(e.to_string()))?;

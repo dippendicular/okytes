@@ -24,6 +24,7 @@ impl Client {
     /// Plaintext endpoints must use an explicit loopback address. HTTPS retains
     /// normal certificate verification; unsafe URLs and token redirects fail.
     pub fn new(connection: Connection) -> EngineResult<Self> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let base = Url::parse(&connection.url).map_err(|_| invalid())?;
         let local = base.host_str().is_some_and(|host| {
             host == "localhost"
@@ -227,6 +228,31 @@ impl DesktopService for Client {
                 }
             });
             Ok(rx)
+        })
+    }
+}
+
+impl okytes_torrent_types::TorrentService for Client {
+    fn inspect_torrent(
+        &self,
+        input: okytes_torrent_types::Input,
+    ) -> Reply<'_, okytes_torrent_types::Metadata> {
+        Box::pin(async move {
+            self.request(Method::POST, "v1/torrents/inspect", Some(&input))
+                .await
+        })
+    }
+    fn add_torrent(&self, input: okytes_torrent_types::Input) -> Reply<'_, String> {
+        Box::pin(async move {
+            self.request(Method::POST, "v1/torrents", Some(&input))
+                .await
+        })
+    }
+    fn torrent(&self, id: String) -> Reply<'_, okytes_torrent_types::Snapshot> {
+        Box::pin(async move {
+            let id = uuid::Uuid::parse_str(&id).map_err(|_| invalid())?;
+            self.request(Method::GET, &format!("v1/torrents/{id}"), None::<&()>)
+                .await
         })
     }
 }

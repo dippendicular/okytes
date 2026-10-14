@@ -45,7 +45,7 @@ pub struct Engine {
     full_progress: Mutex<HashMap<JobId, u64>>,
     workers: Mutex<HashMap<JobId, u32>>,
     sessions: Mutex<HashMap<JobId, Vec<(String, String)>>>,
-    traffic: crate::traffic::TrafficController,
+    traffic: Arc<crate::traffic::TrafficController>,
     fair: Arc<crate::fairness::FairGate>,
 }
 struct Active<'a> {
@@ -103,7 +103,9 @@ impl Engine {
                 config.max_connections_total,
                 config.max_connections_per_origin,
             ),
-            traffic: crate::traffic::TrafficController::new(config.traffic.clone())?,
+            traffic: Arc::new(crate::traffic::TrafficController::new(
+                config.traffic.clone(),
+            )?),
             jobs: Semaphore::new(config.max_concurrent_jobs.max(1)),
             config,
             transport,
@@ -120,6 +122,14 @@ impl Engine {
     /// Apply persisted payload preferences without replacing running workers.
     pub fn set_traffic(&self, policy: crate::traffic::TrafficPolicy) -> EngineResult<()> {
         self.traffic.set(policy)
+    }
+    /// Shared aggregate payload admission for independent protocol executors.
+    pub fn traffic_controller(&self) -> Arc<crate::traffic::TrafficController> {
+        self.traffic.clone()
+    }
+    /// Bounded event producer for independent job executors.
+    pub fn event_sender(&self) -> broadcast::Sender<EngineEvent> {
+        self.events.clone()
     }
     /// Current recurring queue gate. Uses UTC wall time and explicit IANA zone.
     pub fn queue_allowed(&self) -> EngineResult<bool> {
@@ -221,6 +231,7 @@ impl Engine {
         }
         let partial_path = dir.join(format!(".{id}.okytes.part"));
         let job = JobRecord {
+            protocol: crate::types::http_protocol(),
             capture_id,
             requires_session,
             use_server_filename: request.filename.is_none(),
@@ -308,6 +319,11 @@ impl Engine {
     }
     /// Execute a queued or crash-interrupted job with bounded admission.
     pub async fn execute_job(&self, id: JobId) -> EngineResult<()> {
+        if self.status(id).await?.protocol != "http" {
+            return Err(EngineError::Config(
+                "job requires a different protocol executor".into(),
+            ));
+        }
         let _permit = self
             .jobs
             .acquire()
@@ -1112,7 +1128,7 @@ impl DownloadService for Engine {
                 .load_job(id)
                 .await?
                 .ok_or(EngineError::JobNotFound(id))?;
-            if job.state != JobState::Completed {
+            if job.protocol == "http" && job.state != JobState::Completed {
                 job.bytes_downloaded = self
                     .store
                     .load_segments(id)

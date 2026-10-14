@@ -11,19 +11,49 @@
     "activeTab",
     "scripting"
   ],
-  "optional_permissions": ["cookies", "webRequest"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "background": { "scripts": ["background.js"] },
-  "action": { "default_popup": "popup.html", "default_title": "Okytes" },
-  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "optional_permissions": [
+    "cookies",
+    "webRequest"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Okytes",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "okytes@okytes.org",
       "strict_min_version": "128.0",
-      "data_collection_permissions": { "required": ["none"] }
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
   }
 }

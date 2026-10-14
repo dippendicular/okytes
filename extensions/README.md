@@ -1,5 +1,7 @@
 # Okytes browser integration
 
+<img width="360" alt="Okytes" src="../assets/images/brand/okytes_logo_transperant.png" />
+
 Browser integration requires the running Okytes desktop app and its separately
 registered native host. The host forwards captures over authenticated per-user
 IPC; it does not run downloads. Closing the browser or killing its host after

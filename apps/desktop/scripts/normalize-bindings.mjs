@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 for (const name of [
   "Settings",
+  "Job",
   "TrafficPolicy",
   "JobLimit",
   "ScheduleWindow",

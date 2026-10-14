@@ -3,6 +3,8 @@ import type { ScheduleWindow } from "../../../crates/core/bindings/ScheduleWindo
 
 export const defaultTraffic: TrafficPolicy = {
   global_bps: null,
+  upload_bps: null,
+  per_job_upload_bps: null,
   per_job_bps: null,
   job_limits: [],
   timezone: "UTC",
@@ -74,6 +76,18 @@ export function TrafficSettings({
         label="Limit for each download"
         value={policy.per_job_bps}
         onChange={(per_job_bps) => onChange({ ...policy, per_job_bps })}
+      />
+      <Rate
+        label="Total torrent upload limit"
+        value={policy.upload_bps}
+        onChange={(upload_bps) => onChange({ ...policy, upload_bps })}
+      />
+      <Rate
+        label="Upload limit for each torrent"
+        value={policy.per_job_upload_bps}
+        onChange={(per_job_upload_bps) =>
+          onChange({ ...policy, per_job_upload_bps })
+        }
       />
       <label>
         Schedule timezone
@@ -202,6 +216,7 @@ export function TrafficSettings({
                 start_minute: 540,
                 end_minute: 1020,
                 global_bps: null,
+
                 queue_allowed: null,
               },
             ],

@@ -11,6 +11,7 @@ use okytes_core::{
     types::{ConflictStrategy, DownloadRequest, JobId, JobRecord},
 };
 use okytes_persistence::{files::LocalFiles, EngineLease, SqliteStore};
+use okytes_torrent_types::TorrentService;
 use okytes_transport_http::HttpTransport;
 use std::{
     collections::HashMap,
@@ -20,6 +21,9 @@ use std::{
 };
 use tokio::{sync::Mutex, task::JoinHandle};
 use uuid::Uuid;
+/// Portable app backend includes both HTTP controls and torrent capabilities.
+pub trait AppService: DesktopService + TorrentService {}
+impl<T: DesktopService + TorrentService> AppService for T {}
 
 struct Queue {
     stopping: bool,
@@ -33,6 +37,7 @@ struct Queue {
 pub struct Session {
     database_path: PathBuf,
     engine: Arc<Engine>,
+    torrent: Arc<okytes_transport_torrent::Adapter>,
     store: Arc<SqliteStore>,
     queue: Mutex<Queue>,
     _lease: Arc<EngineLease>,
@@ -100,6 +105,7 @@ impl Session {
             ])
             .await?;
         self.engine.set_traffic(settings.traffic.clone())?;
+        self.torrent.set_traffic(&settings.traffic)?;
         queue.settings = settings;
         Ok(())
     }
@@ -112,6 +118,18 @@ impl Session {
         let mut resume = Vec::new();
         for id in &ids {
             let job = self.engine.status(*id).await?;
+            if job.protocol == "torrent" {
+                if job.state == JobState::Verifying {
+                    self.torrent.stop_after_publication(*id)?;
+                }
+                if job.state != JobState::Verifying {
+                    self.torrent.pause(*id).await?;
+                    if job.state.is_active() || job.state == JobState::Queued {
+                        resume.push(*id);
+                    }
+                }
+                continue;
+            }
             if (job.state.is_active() || job.state == JobState::Queued)
                 && self.engine.pause(*id).await.is_ok()
             {
@@ -125,7 +143,11 @@ impl Session {
         }
         for id in resume {
             if self.engine.status(id).await?.state == JobState::Paused {
-                self.engine.resume(id).await?;
+                if self.engine.status(id).await?.protocol == "torrent" {
+                    self.torrent.resume(id).await?;
+                } else {
+                    self.engine.resume(id).await?;
+                }
             }
         }
         Ok(())
@@ -173,7 +195,7 @@ impl Session {
     /// Open durable history and recover interrupted transfers with exclusive ownership.
     pub async fn open(database: &Path, destination: &Path) -> EngineResult<Arc<Self>> {
         let store = Arc::new(SqliteStore::open(database)?);
-        let lease = SqliteStore::acquire_engine(database)?;
+        let lease = Arc::new(SqliteStore::acquire_engine(database)?);
         let mut settings = match store.preference("desktop-v1").await? {
             Some(value) => serde_json::from_str(&value).map_err(|e| invalid(e.to_string()))?,
             None => Settings {
@@ -201,9 +223,19 @@ impl Session {
             store.clone(),
             Arc::new(LocalFiles),
         )?);
+        let torrent = okytes_transport_torrent::Adapter::new(
+            store.clone(),
+            database.with_extension("torrent-data"),
+            PathBuf::from(&settings.destination),
+            engine.traffic_controller(),
+            settings.traffic.clone(),
+            engine.event_sender(),
+        )?;
+        torrent.retain_lease(lease.clone())?;
         let session = Arc::new(Self {
             database_path: database.into(),
             engine,
+            torrent,
             store,
             queue: Mutex::new(Queue {
                 stopping: false,
@@ -212,7 +244,7 @@ impl Session {
                 samples: HashMap::new(),
                 revision: 0,
             }),
-            _lease: Arc::new(lease),
+            _lease: lease,
         });
         let weak = Arc::downgrade(&session);
         tokio::spawn(async move { runner(weak).await });
@@ -231,7 +263,7 @@ impl Session {
     async fn render(&self, mut job: JobRecord, queue: &mut Queue) -> EngineResult<Job> {
         let id = job.id;
         let segments = self.store.load_segments(id).await?;
-        if job.state != JobState::Completed {
+        if job.protocol == "http" && job.state != JobState::Completed {
             job.bytes_downloaded = segments.iter().map(|s| s.bytes_downloaded).sum();
         }
         if let Some(bytes) = self.engine.live_full_bytes(id) {
@@ -257,6 +289,7 @@ impl Session {
             0.0
         };
         Ok(Job {
+            protocol: job.protocol.clone(),
             id: job.id.to_string(),
             name: job
                 .output_path
@@ -265,7 +298,14 @@ impl Session {
                 .unwrap_or_default(),
             url: job.url.to_string(),
             destination: job.output_path.to_string_lossy().into(),
-            state: format!("{:?}", job.state),
+            state: if job.protocol == "torrent"
+                && job.state == JobState::Completed
+                && self.torrent.is_seeding(id)?
+            {
+                "Seeding".into()
+            } else {
+                format!("{:?}", job.state)
+            },
             bytes: job.bytes_downloaded as f64,
             total: job.total_size.map(|n| n as f64),
             speed,
@@ -289,6 +329,23 @@ impl Session {
     }
 
     async fn stop(&self, job: &JobRecord, queue: &mut Queue, cancel: bool) -> EngineResult<()> {
+        if job.protocol == "torrent" {
+            if cancel {
+                self.torrent.cancel(job.id).await?;
+            } else {
+                self.torrent.pause(job.id).await?;
+            }
+            if let Some(task) = queue.tasks.remove(&job.id) {
+                task.await
+                    .map_err(|_| invalid("torrent worker shutdown failed"))?;
+            }
+            if cancel && job.partial_path.exists() {
+                tokio::fs::remove_dir_all(&job.partial_path)
+                    .await
+                    .map_err(|e| invalid(e.to_string()))?;
+            }
+            return Ok(());
+        }
         if !matches!(job.state, JobState::Completed | JobState::Cancelled) {
             if cancel {
                 self.engine.cancel(job.id).await?;
@@ -363,6 +420,12 @@ async fn admit(session: &Arc<Session>) -> EngineResult<()> {
     if queue.tasks.len() >= limit {
         return Ok(());
     }
+    let mut torrents = 0;
+    for id in queue.tasks.keys() {
+        if session.engine.status(*id).await?.protocol == "torrent" {
+            torrents += 1;
+        }
+    }
     for job in session.store.runnable().await? {
         if queue.tasks.len() >= limit {
             break;
@@ -370,14 +433,27 @@ async fn admit(session: &Arc<Session>) -> EngineResult<()> {
         if queue.tasks.contains_key(&job.id) {
             continue;
         }
+        if job.protocol == "torrent" {
+            if torrents >= 8 {
+                continue;
+            }
+            torrents += 1;
+        }
         let engine = session.engine.clone();
+        let torrent = session.torrent.clone();
+        let protocol = job.protocol.clone();
         let lease = session._lease.clone();
         let id = job.id;
         queue.tasks.insert(
             id,
             tokio::spawn(async move {
                 let _lease = lease;
-                if let Err(e) = engine.execute_job(id).await {
+                let result = if protocol == "torrent" {
+                    torrent.execute_job(id).await
+                } else {
+                    engine.execute_job(id).await
+                };
+                if let Err(e) = result {
                     tracing::debug!(%id,error=%e,"transfer stopped");
                 }
             }),
@@ -442,13 +518,24 @@ impl DesktopService for Session {
     fn pause_all(&self) -> Reply<'_, ()> {
         Box::pin(async move {
             let mut queue = self.queue.lock().await;
+            for id in queue.tasks.keys() {
+                let job = self.engine.status(*id).await?;
+                if job.protocol == "torrent" && job.state == JobState::Completed {
+                    self.torrent.pause(*id).await?;
+                }
+            }
             loop {
                 let jobs = self.store.runnable().await?;
                 if jobs.is_empty() {
                     break;
                 }
                 for job in jobs {
-                    if let Err(error) = self.engine.pause(job.id).await {
+                    let result = if job.protocol == "torrent" {
+                        self.torrent.pause(job.id).await
+                    } else {
+                        self.engine.pause(job.id).await
+                    };
+                    if let Err(error) = result {
                         let state = self.engine.status(job.id).await?.state;
                         if state.is_active() || state == JobState::Queued {
                             return Err(error);
@@ -581,9 +668,16 @@ impl DesktopService for Session {
                     if let Some(task) = queue.tasks.remove(&id) {
                         task.await.map_err(|e| invalid(e.to_string()))?;
                     }
-                    self.engine.resume(id).await?;
+                    if job.protocol == "torrent" {
+                        self.torrent.resume(id).await?;
+                    } else {
+                        self.engine.resume(id).await?;
+                    }
                 }
                 Action::Restart => {
+                    if job.protocol == "torrent" {
+                        return Err(invalid("re-add the torrent to start a separate transfer"));
+                    }
                     if job.requires_session {
                         return Err(invalid("Capture this download again from the browser to supply a fresh session"));
                     }
@@ -679,11 +773,35 @@ impl DesktopService for Session {
                 ])
                 .await?;
             self.engine.set_traffic(settings.traffic.clone())?;
+            self.torrent.set_traffic(&settings.traffic)?;
             queue.settings = settings;
             Ok(())
         })
     }
     fn subscribe(&self) -> Reply<'_, tokio::sync::broadcast::Receiver<EngineEvent>> {
         self.engine.subscribe()
+    }
+}
+
+impl TorrentService for Session {
+    fn inspect_torrent(
+        &self,
+        input: okytes_torrent_types::Input,
+    ) -> Reply<'_, okytes_torrent_types::Metadata> {
+        self.torrent.inspect_torrent(input)
+    }
+    fn add_torrent(&self, mut input: okytes_torrent_types::Input) -> Reply<'_, String> {
+        Box::pin(async move {
+            let mut queue = self.queue.lock().await;
+            if input.destination.is_none() {
+                input.destination = Some(queue.settings.destination.clone());
+            }
+            let id = self.torrent.add_torrent(input).await?;
+            queue.revision += 1;
+            Ok(id)
+        })
+    }
+    fn torrent(&self, id: String) -> Reply<'_, okytes_torrent_types::Snapshot> {
+        self.torrent.torrent(id)
     }
 }

@@ -42,6 +42,8 @@ beforeEach(() => {
     notifications: true,
     traffic: {
       global_bps: null,
+      upload_bps: null,
+      per_job_upload_bps: null,
       per_job_bps: null,
       job_limits: [],
       timezone: "UTC",
@@ -61,6 +63,7 @@ describe("download dashboard", () => {
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(400);
     vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1000);
     const jobs = Array.from({ length: 500 }, (_, index) => ({
+      protocol: "http",
       id: String(index),
       name: `file-${index}.zip`,
       url: `https://example.com/file-${index}.zip`,

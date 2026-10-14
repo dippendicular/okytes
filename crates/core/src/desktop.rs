@@ -79,6 +79,9 @@ pub enum Action {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct Job {
+    /// Opaque protocol identifier; details are read through its app contract.
+    #[serde(default = "crate::types::http_protocol")]
+    pub protocol: String,
     /// UUID.
     pub id: String,
     /// Filename.

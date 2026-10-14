@@ -1,5 +1,7 @@
 # Okytes desktop
 
+<img width="360" alt="Okytes" src="../../assets/images/brand/okytes_logo_transperant.png" />
+
 The desktop app runs the HTTP engine in-process and stores its download history
 and settings in SQLite. Closing or force-quitting the app leaves durable checkpoints
 for recovery on the next launch. The CLI and desktop may control the same database,

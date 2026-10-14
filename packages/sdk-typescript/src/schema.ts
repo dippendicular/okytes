@@ -228,6 +228,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/torrents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["add_torrent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/torrents/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["inspect_torrent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/torrents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["torrent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -455,6 +503,8 @@ export interface components {
              * @description Priority.
              */
             priority: number;
+            /** @description Opaque protocol identifier; details are read through its app contract. */
+            protocol?: string;
             /**
              * Format: double
              * @description Time to response headers, including origin admission and redirects.
@@ -539,6 +589,8 @@ export interface components {
              * @description Priority (higher = sooner).
              */
             priority: number;
+            /** @description Opaque executor identifier. Core does not interpret protocol internals. */
+            protocol?: string;
             /** @description Remote identity for resume validation. */
             remote_identity: components["schemas"]["RemoteIdentity"];
             /** @description Requires memory-only browser session headers; fail after session loss. */
@@ -742,6 +794,177 @@ export interface components {
             /** @description Effective capability scope. */
             scope: components["schemas"]["Scope"];
         };
+        /** @description One metainfo file, independent of HTTP segment semantics. */
+        TorrentFile: {
+            /**
+             * Format: int64
+             * @description File length; bounded below JavaScript's exact integer limit.
+             */
+            bytes: number;
+            /**
+             * Format: int32
+             * @description Stable file index.
+             */
+            index: number;
+            /** @description Validated relative filename. */
+            path: string;
+            /** @description Whether this file is selected for publication. */
+            selected: boolean;
+        };
+        /** @description Exactly one source must be supplied. Metainfo is base64, maximum 512 KiB decoded. */
+        TorrentInput: {
+            /** @description Absolute destination override; null uses profile settings. */
+            destination?: string | null;
+            /** @description Magnet URI, no larger than 8192 bytes. */
+            magnet?: string | null;
+            /** @description Base64 .torrent contents. */
+            metainfo?: string | null;
+            /** @description Validated file/discovery/seeding preferences. */
+            options?: components["schemas"]["TorrentOptions"];
+        };
+        /** @description Metadata preview, with no file creation or transfer admission. */
+        TorrentMetadata: {
+            /** @description Bounded file list. */
+            files: components["schemas"]["TorrentFile"][];
+            /** @description v1 info hash, verified during resolution. */
+            info_hash: string;
+            /** @description Safe torrent display name. */
+            name: string;
+            /**
+             * Format: int32
+             * @description Piece size in bytes.
+             */
+            piece_bytes: number;
+            /**
+             * Format: int32
+             * @description Total number of verified-piece slots.
+             */
+            pieces: number;
+            /** @description Configured tracker endpoints, sanitized for display. */
+            trackers: string[];
+        };
+        /** @description Torrent options persisted together with the job. */
+        TorrentOptions: {
+            /**
+             * Format: int64
+             * @description Per-torrent download cap, in bytes/second.
+             * @default null
+             */
+            download_bps: number | null;
+            /**
+             * @description Null selects all files; otherwise a nonempty list of file indices.
+             * @default null
+             */
+            files: number[] | null;
+            /**
+             * @description Explicit initial peer addresses, maximum 32; useful for local/manual swarms.
+             * @default []
+             */
+            initial_peers: string[];
+            /**
+             * Format: int32
+             * @description Bounded peer connections, 1..32.
+             * @default 16
+             */
+            peers: number;
+            /**
+             * @default {
+             *       "bind_device": null,
+             *       "bootstrap_nodes": null,
+             *       "dht": false,
+             *       "encryption": "plaintext",
+             *       "listen": "127.0.0.1:0",
+             *       "local_discovery": false,
+             *       "peer_proxy": null,
+             *       "pex": false
+             *     }
+             */
+            privacy: components["schemas"]["TorrentPrivacy"];
+            /**
+             * Format: double
+             * @description Maximum upload/download ratio; null adds no ratio restriction.
+             * @default null
+             */
+            seed_ratio: number | null;
+            /**
+             * Format: int64
+             * @description Seconds to seed after completion; zero stops at completion. Null is explicit unlimited time.
+             * @default 0
+             */
+            seed_seconds: number | null;
+            /**
+             * Format: int64
+             * @description Per-torrent upload cap, in bytes/second.
+             * @default null
+             */
+            upload_bps: number | null;
+        };
+        /** @description Explicit peer discovery and network configuration. */
+        TorrentPrivacy: {
+            /**
+             * @description Supported on Linux/macOS only; interface name, not a filesystem path.
+             * @default null
+             */
+            bind_device: string | null;
+            /**
+             * @description DHT bootstrap overrides; empty means no bootstrap network traffic.
+             * @default null
+             */
+            bootstrap_nodes: string[] | null;
+            /**
+             * @description Enable public DHT discovery; off by default.
+             * @default false
+             */
+            dht: boolean;
+            /**
+             * @description Only plaintext is supported by the pinned engine. Other values fail.
+             * @default plaintext
+             */
+            encryption: string;
+            /**
+             * @description Listening address; loopback by default. No UPnP mapping is requested.
+             * @default 127.0.0.1:0
+             */
+            listen: string;
+            /**
+             * @description Enable local multicast discovery; off by default.
+             * @default false
+             */
+            local_discovery: boolean;
+            /**
+             * @description Optional SOCKS5 peer proxy, without embedded credentials.
+             * @default null
+             */
+            peer_proxy: string | null;
+            /**
+             * @description Exchange peer addresses; off by default.
+             * @default false
+             */
+            pex: boolean;
+        };
+        /** @description Bounded live torrent diagnostics. */
+        TorrentSnapshot: {
+            /** @description Resolving, downloading, paused, publishing, seeding, stopped or failed. */
+            activity: string;
+            /** @description Last actionable adapter error. */
+            error?: string | null;
+            /** @description Unified job UUID. */
+            id: string;
+            metadata?: null | components["schemas"]["TorrentMetadata"];
+            /** @description Active options. */
+            options: components["schemas"]["TorrentOptions"];
+            /** @description Serialized maintained-engine peer statistics; count remains bounded. */
+            peers: string;
+            /** @description Tracker discovery state; does not imply successful announce telemetry. */
+            tracker_status: string;
+            /**
+             * Format: int64
+             * @description Actual live upload counter, or its last recorded value after stopping.
+             */
+            uploaded_bytes: number;
+            /** @description Verified and durable pieces, never HTTP byte segments. */
+            verified: boolean[];
+        };
         /** @description Persistent payload policy shared by every backend. Null rates are unlimited. */
         TrafficPolicy: {
             /**
@@ -762,6 +985,12 @@ export interface components {
              */
             per_job_bps: number | null;
             /**
+             * Format: int64
+             * @description Independent default upload cap for each sharing job.
+             * @default null
+             */
+            per_job_upload_bps: number | null;
+            /**
              * @description Whether the queue runs outside matching queue windows.
              * @default true
              */
@@ -771,6 +1000,12 @@ export interface components {
              * @default UTC
              */
             timezone: string;
+            /**
+             * Format: int64
+             * @description Aggregate upload bytes/second for protocols that share files.
+             * @default null
+             */
+            upload_bps: number | null;
             /**
              * @description At most 32 recurring local-time windows.
              * @default []
@@ -2090,6 +2325,235 @@ export interface operations {
                 };
                 content: {
                     "text/plain": boolean;
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    add_torrent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TorrentInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    inspect_torrent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TorrentInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TorrentMetadata"];
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    torrent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TorrentSnapshot"];
                 };
             };
             /** @description Invalid input */

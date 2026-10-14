@@ -13,7 +13,10 @@ members = [
     "crates/daemon-api",
     "apps/daemon",
     "benchmarks",
+    "crates/torrent-types",
+    "crates/transport-torrent",
 ]
+exclude = ["vendor/librqbit", "vendor/librqbit-utp", "vendor/librqbit-dht", "vendor/librqbit-tracker-comms"]
 
 [workspace.package]
 version = "0.1.0"
@@ -71,3 +74,12 @@ okytes-core = { version = "=0.1.0", path = "crates/core" }
 okytes-transport-http = { version = "=0.1.0", path = "crates/transport-http" }
 okytes-persistence = { version = "=0.1.0", path = "crates/persistence" }
 okytes-test-support = { version = "=0.1.0", path = "crates/test-support" }
+okytes-torrent-types = { version = "=0.1.0", path = "crates/torrent-types" }
+okytes-transport-torrent = { version = "=0.1.0", path = "crates/transport-torrent" }
+
+[patch.crates-io]
+librqbit = { path = "vendor/librqbit" }
+librqbit-utp = { path = "vendor/librqbit-utp" }
+
+librqbit-dht = { path = "vendor/librqbit-dht" }
+librqbit-tracker-comms = { path = "vendor/librqbit-tracker-comms" }

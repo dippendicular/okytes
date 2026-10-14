@@ -19,6 +19,7 @@ type Command = Box<dyn FnOnce(&mut Connection) + Send>;
 #[derive(Clone)]
 pub struct SqliteStore {
     tx: mpsc::Sender<Command>,
+    path: std::sync::Arc<std::path::PathBuf>,
 }
 
 fn db(error: impl std::fmt::Display) -> EngineError {
@@ -31,6 +32,199 @@ pub struct EngineLease {
 }
 
 impl SqliteStore {
+    /// Profile path for native lease ownership, never selected by remote requests.
+    pub fn database_path(&self) -> &Path {
+        &self.path
+    }
+    /// Whether an executor still owns native data I/O for this job.
+    pub fn torrent_active(&self, id: JobId) -> Reply<bool> {
+        self.call(move|conn|conn.query_row("SELECT COALESCE(json_extract(descriptor,'$.active'),0) FROM torrent_jobs WHERE job_id=?1",[id.to_string()],|r|r.get(0)).map_err(db))
+    }
+    /// Acknowledge quiescence after sockets, storage and callbacks have drained.
+    pub fn torrent_idle(&self, id: JobId) -> Reply<()> {
+        self.call(move|conn|{conn.execute("UPDATE torrent_jobs SET descriptor=json_set(descriptor,'$.active',json('false')) WHERE job_id=?1",[id.to_string()]).map_err(db)?;Ok(())})
+    }
+    /// Control intent is atomic with the generic state; publication cannot race it.
+    pub fn torrent_control(&self, id: JobId, state: JobState) -> Reply<()> {
+        self.call(move|conn|{let tx=conn.transaction().map_err(db)?;let text:String=tx.query_row("SELECT record FROM jobs WHERE id=?1",[id.to_string()],|r|r.get(0)).map_err(db)?;let mut job:JobRecord=serde_json::from_str(&text).map_err(db)?;if job.protocol!="torrent" || job.state==JobState::Verifying{return Err(db("torrent publication is protected"));}
+if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.updated_at=chrono::Utc::now();save_job(&tx,&job)?;}tx.execute("UPDATE torrent_jobs SET descriptor=json_set(descriptor,'$.stop_requested',json('true')) WHERE job_id=?1",[id.to_string()]).map_err(db)?;tx.commit().map_err(db)?;Ok(())})
+    }
+    /// Reset a stopped executor only after its job has explicitly entered probing.
+    pub fn torrent_begin(&self, id: JobId) -> Reply<()> {
+        self.call(move|conn|{let changed=conn.execute("UPDATE torrent_jobs SET descriptor=json_set(descriptor,'$.stop_requested',json('false'),'$.active',json('true')) WHERE job_id=?1 AND EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND state='probing')",[id.to_string()]).map_err(db)?;if changed!=1{return Err(db("torrent startup was interrupted"));}Ok(())})
+    }
+    /// Small control polling query; never repeatedly fetch a metainfo blob.
+    pub fn torrent_stop_requested(&self, id: JobId) -> Reply<bool> {
+        self.call(move|conn|conn.query_row("SELECT COALESCE(json_extract(descriptor,'$.stop_requested'),0) FROM torrent_jobs WHERE job_id=?1",[id.to_string()],|r|r.get(0)).map_err(db))
+    }
+    /// Update protocol progress without overwriting a concurrent pause/cancel.
+    pub fn torrent_progress(&self, id: JobId, bytes: u64, total: u64) -> Reply<()> {
+        self.call(move |conn| {
+            if bytes > total || total > 64 * 1024 * 1024 * 1024 {
+                return Err(db("invalid torrent progress"));
+            }
+            let text: String = conn
+                .query_row(
+                    "SELECT record FROM jobs WHERE id=?1",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(db)?;
+            let mut job: JobRecord = serde_json::from_str(&text).map_err(db)?;
+            if job.protocol != "torrent" {
+                return Err(db("wrong progress executor"));
+            }
+            job.bytes_downloaded = bytes;
+            job.total_size = Some(total);
+            job.updated_at = chrono::Utc::now();
+            save_job(conn, &job)
+        })
+    }
+    /// Atomically add an opaque protocol descriptor and its generic job record.
+    pub fn create_torrent(&self, job: &JobRecord, descriptor: &str, metadata: &[u8]) -> Reply<()> {
+        let job = job.clone();
+        let descriptor = descriptor.to_owned();
+        let metadata = metadata.to_vec();
+        self.call(move |conn|{if descriptor.len()>32768 || metadata.len()>512*1024{return Err(db("torrent record exceeds bounds"));}let tx=conn.transaction().map_err(db)?;save_job(&tx,&job)?;tx.execute("INSERT INTO torrent_jobs(job_id,descriptor,metadata,upload_reserved) VALUES (?1,?2,?3,0)",params![job.id.to_string(),descriptor,metadata]).map_err(db)?;tx.commit().map_err(db)?;Ok(())})
+    }
+    /// Read bounded opaque torrent state and original metainfo bytes.
+    pub fn torrent_record(&self, id: JobId) -> Reply<Option<(String, Vec<u8>)>> {
+        self.call(move |conn| {
+            use rusqlite::OptionalExtension;
+            conn.query_row(
+                "SELECT descriptor,metadata FROM torrent_jobs WHERE job_id=?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(db)
+        })
+    }
+    /// Persist app-level torrent state without altering HTTP segment tables.
+    pub fn set_torrent_record(&self, id: JobId, descriptor: &str, metadata: &[u8]) -> Reply<()> {
+        let descriptor = descriptor.to_owned();
+        let metadata = metadata.to_vec();
+        self.call(move |conn| {
+            if descriptor.len() > 32768 || metadata.len() > 512 * 1024 {
+                return Err(db("torrent record exceeds bounds"));
+            }
+            conn.execute(
+                "UPDATE torrent_jobs SET descriptor=json_set(?2,'$.stop_requested',json(CASE WHEN json_extract(descriptor,'$.stop_requested')=1 THEN 'true' ELSE 'false' END),'$.active',json(CASE WHEN json_extract(descriptor,'$.active')=1 THEN 'true' ELSE 'false' END)),metadata=?3 WHERE job_id=?1",
+                params![id.to_string(), descriptor, metadata],
+            )
+            .map_err(db)?;
+            Ok(())
+        })
+    }
+    /// Reserve upload quota durably before a sharing protocol can send payload.
+    pub fn reserve_torrent_upload(&self, id: JobId, bytes: u64, cap: Option<u64>) -> Reply<bool> {
+        self.call(move |conn| {
+            let tx = conn.transaction().map_err(db)?;
+            let old: u64 = tx
+                .query_row(
+                    "SELECT upload_reserved FROM torrent_jobs WHERE job_id=?1",
+                    [id.to_string()],
+                    |r| r.get(0),
+                )
+                .map_err(db)?;
+            let Some(next) = old.checked_add(bytes).filter(|n| *n <= i64::MAX as u64) else {
+                return Err(db("upload ledger overflow"));
+            };
+            if cap.is_some_and(|cap| next > cap) {
+                return Ok(false);
+            }
+            tx.execute(
+                "UPDATE torrent_jobs SET upload_reserved=?2 WHERE job_id=?1",
+                params![id.to_string(), next],
+            )
+            .map_err(db)?;
+            tx.commit().map_err(db)?;
+            Ok(true)
+        })
+    }
+    /// Read verified piece markers, bounded by the adapter's validated metadata.
+    pub fn torrent_pieces(&self, id: JobId, count: usize) -> Reply<Vec<bool>> {
+        self.call(move |conn| {
+            if count > 16384 {
+                return Err(db("piece bitmap exceeds bounds"));
+            }
+            let mut bits = vec![false; count];
+            let mut statement = conn
+                .prepare("SELECT piece FROM torrent_pieces WHERE job_id=?1")
+                .map_err(db)?;
+            let rows = statement
+                .query_map([id.to_string()], |r| r.get::<_, usize>(0))
+                .map_err(db)?;
+            for row in rows {
+                let index = row.map_err(db)?;
+                if let Some(bit) = bits.get_mut(index) {
+                    *bit = true;
+                }
+            }
+            Ok(bits)
+        })
+    }
+    /// Replace restart-rechecked verified markers in one transaction.
+    pub fn replace_torrent_pieces(&self, id: JobId, bits: Vec<bool>) -> Reply<()> {
+        self.call(move |conn| {
+            if bits.len() > 16384 {
+                return Err(db("piece bitmap exceeds bounds"));
+            }
+            let tx = conn.transaction().map_err(db)?;
+            tx.execute(
+                "DELETE FROM torrent_pieces WHERE job_id=?1",
+                [id.to_string()],
+            )
+            .map_err(db)?;
+            for (index, verified) in bits.into_iter().enumerate() {
+                if verified {
+                    tx.execute(
+                        "INSERT INTO torrent_pieces VALUES (?1,?2)",
+                        params![id.to_string(), index],
+                    )
+                    .map_err(db)?;
+                }
+            }
+            tx.commit().map_err(db)?;
+            Ok(())
+        })
+    }
+    /// Synchronous storage callback: verified data must already be synced.
+    /// A finite writer mailbox and acknowledgement timeout fail closed.
+    pub fn commit_torrent_piece(&self, id: JobId, piece: usize) -> Result<(), EngineError> {
+        if piece >= 16384 {
+            return Err(db("piece index exceeds bounds"));
+        }
+        let (reply, receive) = std::sync::mpsc::sync_channel(1);
+        self.tx
+            .try_send(Box::new(move |conn| {
+                let result = (|| {
+                    let tx = conn.transaction().map_err(db)?;
+                    let active: bool = tx
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND state='downloading')",
+                            [id.to_string()],
+                            |r| r.get(0),
+                        )
+                        .map_err(db)?;
+                    if !active {
+                        return Err(db("piece acknowledgement was stopped"));
+                    }
+                    tx.execute(
+                        "INSERT OR IGNORE INTO torrent_pieces VALUES (?1,?2)",
+                        params![id.to_string(), piece],
+                    )
+                    .map_err(db)?;
+                    tx.commit().map_err(db)?;
+                    Ok(())
+                })();
+                let _ = reply.send(result);
+            }))
+            .map_err(db)?;
+        receive
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(db)?
+    }
     /// Read a bounded admission window without scanning terminal history.
     pub fn runnable(&self) -> Reply<Vec<JobRecord>> {
         self.call(|conn| {
@@ -77,6 +271,7 @@ impl SqliteStore {
     /// Open/migrate a database and launch its bounded writer.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, EngineError> {
         let path = path.as_ref().to_owned();
+        let location = std::sync::Arc::new(std::path::absolute(&path).map_err(db)?);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -108,7 +303,9 @@ impl SqliteStore {
                     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                     PRAGMA user_version=1;").map_err(db)?;}
                 else if version!=1 {return Err(PersistenceError::Migration(format!("unsupported schema version {version}")).into());}
-                conn.execute_batch("CREATE INDEX IF NOT EXISTS jobs_runnable ON jobs(priority DESC) WHERE state IN ('queued','probing','downloading','verifying');").map_err(db)?;
+                conn.execute_batch("CREATE INDEX IF NOT EXISTS jobs_runnable ON jobs(priority DESC) WHERE state IN ('queued','probing','downloading','verifying');
+                    CREATE TABLE IF NOT EXISTS torrent_jobs(job_id TEXT PRIMARY KEY REFERENCES jobs(id),descriptor TEXT NOT NULL,metadata BLOB NOT NULL,upload_reserved INTEGER NOT NULL DEFAULT 0);
+                    CREATE TABLE IF NOT EXISTS torrent_pieces(job_id TEXT NOT NULL REFERENCES jobs(id),piece INTEGER NOT NULL,PRIMARY KEY(job_id,piece));").map_err(db)?;
                 Ok(conn)
             })();
             match conn {
@@ -120,7 +317,7 @@ impl SqliteStore {
             }
         }).map_err(db)?;
         ready_rx.recv().map_err(db)??;
-        Ok(Self { tx })
+        Ok(Self { tx, path: location })
     }
 
     /// Prevent two CLI runners from writing the same partial files.
@@ -378,6 +575,13 @@ impl JobStore for SqliteStore {
         self.call(move |conn| {
             let tx = conn
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(db)?;
+            tx.execute(
+                "DELETE FROM torrent_pieces WHERE job_id=?1",
+                [id.to_string()],
+            )
+            .map_err(db)?;
+            tx.execute("DELETE FROM torrent_jobs WHERE job_id=?1", [id.to_string()])
                 .map_err(db)?;
             tx.execute("DELETE FROM segments WHERE job_id=?1", [id.to_string()])
                 .map_err(db)?;

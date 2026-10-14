@@ -1,5 +1,7 @@
 # Okytes TypeScript SDK
 
+<img width="360" alt="Okytes" src="../../assets/images/brand/okytes_logo_transperant.png" />
+
 Types are generated from the daemon's reviewed OpenAPI contract. Runtime requests
 use `openapi-fetch`, with bearer authentication and redirect rejection.
 

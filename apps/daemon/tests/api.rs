@@ -33,6 +33,9 @@ async fn every_endpoint_rejects_missing_credentials_and_enforces_all_scopes() {
         .unwrap()
         .token;
     let paths = [
+        (Method::POST, "v1/torrents", Scope::Control),
+        (Method::POST, "v1/torrents/inspect", Scope::Control),
+        (Method::GET, "v1/torrents/not-a-job", Scope::ReadOnly),
         (Method::GET, "v1/records", Scope::ReadOnly),
         (Method::GET, "v1/records/not-a-job", Scope::ReadOnly),
         (Method::GET, "v1/config", Scope::ReadOnly),

@@ -1,5 +1,6 @@
 //! Foreground CLI using the same engine and checkpoint store as library clients.
 use anyhow::{bail, Result};
+use base64::Engine as _;
 use clap::{Parser, Subcommand};
 use futures::{stream, StreamExt};
 use okytes_core::{
@@ -9,12 +10,17 @@ use okytes_core::{
     types::{ConflictStrategy, DownloadRequest, EngineConfig},
 };
 use okytes_persistence::SqliteStore;
+use okytes_torrent_types::TorrentService;
 use okytes_transport_http::HttpTransport;
 use std::{path::PathBuf, sync::Arc};
 use uuid::Uuid;
 
 #[derive(Parser)]
-#[command(name = "okytes", version, about = "Crash-safe HTTP download manager")]
+#[command(
+    name = "okytes",
+    version,
+    about = "Crash-safe downloads, torrents and magnet links"
+)]
 struct Args {
     #[arg(long, global = true)]
     daemon_url: Option<String>,
@@ -29,6 +35,20 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Add a magnet or .torrent. JSON options configure selection, privacy and seeding.
+    Torrent {
+        source: String,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        options: Option<PathBuf>,
+        #[arg(long)]
+        run: bool,
+    },
+    /// Read peers, metadata and verified pieces.
+    TorrentStatus {
+        id: Uuid,
+    },
     /// Add a job; use --run to download it immediately in this foreground process.
     Add {
         url: String,
@@ -131,7 +151,32 @@ async fn execute(args: Args) -> Result<()> {
         store.clone(),
         Arc::new(okytes_persistence::files::LocalFiles),
     )?);
+    let torrent = okytes_transport_torrent::Adapter::new(
+        store.clone(),
+        std::path::absolute(&args.db)?.with_extension("torrent-data"),
+        std::path::absolute(&config.default_output_dir)?,
+        engine.traffic_controller(),
+        config.traffic.clone(),
+        engine.event_sender(),
+    )?;
     match args.command {
+        Command::Torrent {
+            source,
+            output,
+            options,
+            run,
+        } => {
+            let input = torrent_input(source, output, options)?;
+            let id: Uuid = torrent.add_torrent(input).await?.parse()?;
+            print(id, args.json)?;
+            if run {
+                let _lease = Arc::new(SqliteStore::acquire_engine(&args.db)?);
+                torrent.retain_lease(_lease.clone())?;
+                torrent.execute_job(id).await?;
+                print(torrent.status(id).await?, args.json)?;
+            }
+        }
+        Command::TorrentStatus { id } => print(torrent.torrent(id.to_string()).await?, args.json)?,
         Command::Add {
             url,
             output,
@@ -158,29 +203,45 @@ async fn execute(args: Args) -> Result<()> {
                 .await?;
             print(id, args.json)?;
             if run {
-                let _lease = SqliteStore::acquire_engine(&args.db)?;
-                engine.execute_job(id).await?;
+                let _lease = Arc::new(SqliteStore::acquire_engine(&args.db)?);
+                torrent.retain_lease(_lease.clone())?;
+                execute_job(&engine, &torrent, id).await?;
                 print(engine.status(id).await?, args.json)?;
             }
         }
         Command::List { offset } => print(store.page(offset).await?, args.json)?,
         Command::Status { id } => print(engine.status(id).await?, args.json)?,
         Command::Pause { id } => {
-            engine.pause(id).await?;
+            if engine.status(id).await?.protocol == "torrent" {
+                torrent.pause(id).await?;
+            } else {
+                engine.pause(id).await?;
+            }
             print(engine.status(id).await?, args.json)?;
         }
         Command::Resume { id, run } => {
-            engine.resume(id).await?;
+            if engine.status(id).await?.protocol == "torrent" {
+                torrent.resume(id).await?;
+            } else {
+                engine.resume(id).await?;
+            }
             if run {
-                let _lease = SqliteStore::acquire_engine(&args.db)?;
-                engine.execute_job(id).await?;
+                let _lease = Arc::new(SqliteStore::acquire_engine(&args.db)?);
+                torrent.retain_lease(_lease.clone())?;
+                execute_job(&engine, &torrent, id).await?;
             }
             print(engine.status(id).await?, args.json)?;
         }
         Command::Cancel { id } => {
-            engine.cancel(id).await?;
-            if let Ok(_lease) = SqliteStore::acquire_engine(&args.db) {
-                engine.execute_job(id).await?;
+            if engine.status(id).await?.protocol == "torrent" {
+                torrent.cancel(id).await?;
+            } else {
+                engine.cancel(id).await?;
+            }
+            if engine.status(id).await?.protocol == "http" {
+                if let Ok(_lease) = SqliteStore::acquire_engine(&args.db) {
+                    execute_job(&engine, &torrent, id).await?;
+                }
             }
             print(engine.status(id).await?, args.json)?;
         }
@@ -212,7 +273,8 @@ async fn execute(args: Args) -> Result<()> {
             print(store.config().await?, args.json)?;
         }
         Command::Run => {
-            let _lease = SqliteStore::acquire_engine(&args.db)?;
+            let _lease = Arc::new(SqliteStore::acquire_engine(&args.db)?);
+            torrent.retain_lease(_lease.clone())?;
             let mut offset = 0;
             let mut failed = false;
             loop {
@@ -228,7 +290,8 @@ async fn execute(args: Args) -> Result<()> {
                 let mut results = stream::iter(ids)
                     .map(|id| {
                         let engine = engine.clone();
-                        async move { (id, engine.execute_job(id).await) }
+                        let torrent = torrent.clone();
+                        async move { (id, execute_job(&engine, &torrent, id).await) }
                     })
                     .buffer_unordered(config.max_concurrent_jobs);
                 while let Some((id, result)) = results.next().await {
@@ -284,6 +347,22 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
     use okytes_core::desktop::{Action, DesktopService, Submit};
     use reqwest::Method;
     match args.command {
+        Command::Torrent {
+            source,
+            output,
+            options,
+            run,
+        } => {
+            let id: Uuid = client
+                .add_torrent(torrent_input(source, output, options)?)
+                .await?
+                .parse()?;
+            print(id, args.json)?;
+            if run {
+                print(remote_wait(&client, id).await?, args.json)?;
+            }
+        }
+        Command::TorrentStatus { id } => print(client.torrent(id.to_string()).await?, args.json)?,
         Command::Add {
             url,
             output,
@@ -402,4 +481,62 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
         }
     }
     Ok(())
+}
+
+fn torrent_input(
+    source: String,
+    output: Option<PathBuf>,
+    options: Option<PathBuf>,
+) -> Result<okytes_torrent_types::Input> {
+    let options = match options {
+        Some(path) => serde_json::from_slice(&read_bounded(&path, 65536)?)?,
+        None => Default::default(),
+    };
+    let (magnet, metainfo) = if source.starts_with("magnet:") {
+        (Some(source), None)
+    } else {
+        let path = PathBuf::from(source);
+        if !std::fs::metadata(&path)?.is_file() || std::fs::metadata(&path)?.len() > 512 * 1024 {
+            bail!("metainfo exceeds 512 KiB");
+        }
+        (
+            None,
+            Some(
+                base64::engine::general_purpose::STANDARD.encode(read_bounded(&path, 512 * 1024)?),
+            ),
+        )
+    };
+    Ok(okytes_torrent_types::Input {
+        magnet,
+        metainfo,
+        destination: output
+            .map(std::path::absolute)
+            .transpose()?
+            .map(|p| p.to_string_lossy().into_owned()),
+        options,
+    })
+}
+async fn execute_job(
+    engine: &Engine,
+    torrent: &okytes_transport_torrent::Adapter,
+    id: Uuid,
+) -> Result<()> {
+    if engine.status(id).await?.protocol == "torrent" {
+        torrent.execute_job(id).await?;
+    } else {
+        engine.execute_job(id).await?;
+    }
+    Ok(())
+}
+
+fn read_bounded(path: &std::path::Path, limit: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = vec![];
+    std::fs::File::open(path)?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!("torrent input exceeds its size limit");
+    }
+    Ok(bytes)
 }

@@ -1,6 +1,6 @@
 
 # Okytes
-<img width="1254" height="428" alt="okytes_logo" src="https://github.com/user-attachments/assets/17b5a64d-20a2-435e-b751-33bc20fa98a1" />
+<img width="620" alt="Okytes" src="assets/images/brand/okytes_logo_transperant.png" />
 
 
 **A download manager built to finish what it starts.**
@@ -168,7 +168,15 @@ The [benchmark harness](benchmarks/README.md) compares adaptive transfers with a
 
 ### Bandwidth and schedules
 
-Set a total bandwidth limit, a separate limit for each download, or recurring windows in your chosen timezone. Windows can lower bandwidth or hold the queue until a quieter time. Preferences survive restarts, and a schedule opening preserves downloads you paused yourself. See [bandwidth and schedule settings](docs/bandwidth-and-schedules.md) for desktop, CLI and API usage.
+Set a total bandwidth limit, a separate limit for each download, or recurring windows in your chosen timezone. Windows can lower bandwidth or hold the queue until a quieter time. Preferences survive restarts, and a schedule opening preserves downloads you paused yourself.
+
+### BitTorrent and magnet links
+
+Add a `.torrent` file or paste a magnet link, inspect its files, and choose what to download. Torrent jobs share the queue, history and total download limit with HTTP transfers. A separate BitTorrent engine handles peers and pieces; a piece is recorded in SQLite only after its data is verified and synchronized to disk. Completed jobs publish selected files in their own destination folder.
+
+Sharing can happen while downloading. Seeding stops at completion by default; you can set a time limit, a maximum upload ratio, or both. DHT, peer exchange and local discovery are separate choices and default to off. Peers and trackers can see your IP address and torrent activity. Peer traffic uses plaintext TCP; the optional SOCKS5 proxy covers outgoing peer connections rather than trackers or discovery.
+
+Diagnostics show durable pieces, peers, recorded uploads and configured trackers. Metadata is bounded to 512 KiB, 64 files and 16,384 pieces, with portable ASCII paths; v2 and hybrid torrents are unsupported. Use only material you are entitled to access or distribute.
 
 ### Crash-safe checkpoints
 
@@ -215,7 +223,7 @@ IDM and FDM are established download managers with mature acceleration and recov
 | **Download acceleration** | Adaptive byte-range workers | Dynamic segmentation | Parallel connections |
 | **Resume** | Durable checkpoints and source validation | Resume and recovery | Resume and recovery |
 | **Checksum handling** | SHA-256 with optional expected-hash verification | Depends on workflow | Depends on workflow |
-| **BitTorrent** | Planned integration | Not a primary feature | Supported |
+| **BitTorrent** | v1 torrents, magnets, DHT, selective files and seeding limits | Not a primary feature | Supported |
 | **FTP/SFTP** | Planned server transfers | FTP support | FTP support |
 | **LAN Share** | Planned encrypted peer transfers | Not a primary feature | Not a primary feature |
 | **Automation** | CLI and local API | Command-line integration | Remote-control features |

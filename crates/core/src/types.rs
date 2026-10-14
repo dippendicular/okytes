@@ -139,6 +139,9 @@ pub struct DownloadRequest {
 /// Persistent metadata for a download job.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct JobRecord {
+    /// Opaque executor identifier. Core does not interpret protocol internals.
+    #[serde(default = "http_protocol")]
+    pub protocol: String,
     /// Browser request id for durable idempotency, never a credential.
     #[serde(default)]
     #[schema(value_type=Option<String>, format=Uuid)]
@@ -189,6 +192,11 @@ pub struct JobRecord {
     pub retry_count: u32,
     /// Human-readable error message if failed.
     pub error_message: Option<String>,
+}
+
+/// Default identifier for existing HTTP job records.
+pub fn http_protocol() -> String {
+    "http".into()
 }
 
 /// Persistent metadata for a download segment.

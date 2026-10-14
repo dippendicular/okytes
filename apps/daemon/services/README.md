@@ -1,5 +1,7 @@
 # Service configuration templates
 
+<img width="360" alt="Okytes" src="../../../assets/images/brand/okytes_logo_transperant.png" />
+
 No template is installed automatically. Edit paths and use the same account that
 owns the profile and private token files. Avoid root/LocalSystem for a personal
 download queue.

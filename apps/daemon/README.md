@@ -1,5 +1,7 @@
 # Okytes daemon
 
+<img width="360" alt="Okytes" src="../../assets/images/brand/okytes_logo_transperant.png" />
+
 The daemon owns the existing engine and durable queue in a headless process.
 Desktop, CLI and browser clients can disconnect without stopping its downloads.
 Its HTTP API is authenticated on every route, including the contract and events.

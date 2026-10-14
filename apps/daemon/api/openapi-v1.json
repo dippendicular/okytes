@@ -570,6 +570,10 @@
             "format": "int32",
             "type": "integer"
           },
+          "protocol": {
+            "description": "Opaque protocol identifier; details are read through its app contract.",
+            "type": "string"
+          },
           "response_latency_ms": {
             "description": "Time to response headers, including origin admission and redirects.",
             "format": "double",
@@ -723,6 +727,10 @@
             "description": "Priority (higher = sooner).",
             "format": "int32",
             "type": "integer"
+          },
+          "protocol": {
+            "description": "Opaque executor identifier. Core does not interpret protocol internals.",
+            "type": "string"
           },
           "remote_identity": {
             "$ref": "#/components/schemas/RemoteIdentity",
@@ -1166,6 +1174,335 @@
         ],
         "type": "object"
       },
+      "TorrentFile": {
+        "description": "One metainfo file, independent of HTTP segment semantics.",
+        "properties": {
+          "bytes": {
+            "description": "File length; bounded below JavaScript's exact integer limit.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "index": {
+            "description": "Stable file index.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Validated relative filename.",
+            "type": "string"
+          },
+          "selected": {
+            "description": "Whether this file is selected for publication.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "path",
+          "bytes",
+          "selected"
+        ],
+        "type": "object"
+      },
+      "TorrentInput": {
+        "additionalProperties": false,
+        "description": "Exactly one source must be supplied. Metainfo is base64, maximum 512 KiB decoded.",
+        "properties": {
+          "destination": {
+            "description": "Absolute destination override; null uses profile settings.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "magnet": {
+            "description": "Magnet URI, no larger than 8192 bytes.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metainfo": {
+            "description": "Base64 .torrent contents.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "options": {
+            "$ref": "#/components/schemas/TorrentOptions",
+            "description": "Validated file/discovery/seeding preferences."
+          }
+        },
+        "type": "object"
+      },
+      "TorrentMetadata": {
+        "description": "Metadata preview, with no file creation or transfer admission.",
+        "properties": {
+          "files": {
+            "description": "Bounded file list.",
+            "items": {
+              "$ref": "#/components/schemas/TorrentFile"
+            },
+            "type": "array"
+          },
+          "info_hash": {
+            "description": "v1 info hash, verified during resolution.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Safe torrent display name.",
+            "type": "string"
+          },
+          "piece_bytes": {
+            "description": "Piece size in bytes.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pieces": {
+            "description": "Total number of verified-piece slots.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trackers": {
+            "description": "Configured tracker endpoints, sanitized for display.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "info_hash",
+          "name",
+          "files",
+          "pieces",
+          "piece_bytes",
+          "trackers"
+        ],
+        "type": "object"
+      },
+      "TorrentOptions": {
+        "additionalProperties": false,
+        "description": "Torrent options persisted together with the job.",
+        "properties": {
+          "download_bps": {
+            "default": null,
+            "description": "Per-torrent download cap, in bytes/second.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "files": {
+            "default": null,
+            "description": "Null selects all files; otherwise a nonempty list of file indices.",
+            "items": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "initial_peers": {
+            "default": [],
+            "description": "Explicit initial peer addresses, maximum 32; useful for local/manual swarms.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "peers": {
+            "default": 16,
+            "description": "Bounded peer connections, 1..32.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "privacy": {
+            "default": {
+              "bind_device": null,
+              "bootstrap_nodes": null,
+              "dht": false,
+              "encryption": "plaintext",
+              "listen": "127.0.0.1:0",
+              "local_discovery": false,
+              "peer_proxy": null,
+              "pex": false
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TorrentPrivacy",
+                "description": "Discovery and socket settings."
+              }
+            ]
+          },
+          "seed_ratio": {
+            "default": null,
+            "description": "Maximum upload/download ratio; null adds no ratio restriction.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "seed_seconds": {
+            "default": 0,
+            "description": "Seconds to seed after completion; zero stops at completion. Null is explicit unlimited time.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "upload_bps": {
+            "default": null,
+            "description": "Per-torrent upload cap, in bytes/second.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "TorrentPrivacy": {
+        "additionalProperties": false,
+        "description": "Explicit peer discovery and network configuration.",
+        "properties": {
+          "bind_device": {
+            "default": null,
+            "description": "Supported on Linux/macOS only; interface name, not a filesystem path.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bootstrap_nodes": {
+            "default": null,
+            "description": "DHT bootstrap overrides; empty means no bootstrap network traffic.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "dht": {
+            "default": false,
+            "description": "Enable public DHT discovery; off by default.",
+            "type": "boolean"
+          },
+          "encryption": {
+            "default": "plaintext",
+            "description": "Only plaintext is supported by the pinned engine. Other values fail.",
+            "type": "string"
+          },
+          "listen": {
+            "default": "127.0.0.1:0",
+            "description": "Listening address; loopback by default. No UPnP mapping is requested.",
+            "type": "string"
+          },
+          "local_discovery": {
+            "default": false,
+            "description": "Enable local multicast discovery; off by default.",
+            "type": "boolean"
+          },
+          "peer_proxy": {
+            "default": null,
+            "description": "Optional SOCKS5 peer proxy, without embedded credentials.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pex": {
+            "default": false,
+            "description": "Exchange peer addresses; off by default.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "TorrentSnapshot": {
+        "description": "Bounded live torrent diagnostics.",
+        "properties": {
+          "activity": {
+            "description": "Resolving, downloading, paused, publishing, seeding, stopped or failed.",
+            "type": "string"
+          },
+          "error": {
+            "description": "Last actionable adapter error.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "Unified job UUID.",
+            "type": "string"
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TorrentMetadata",
+                "description": "Metadata once resolved."
+              }
+            ]
+          },
+          "options": {
+            "$ref": "#/components/schemas/TorrentOptions",
+            "description": "Active options."
+          },
+          "peers": {
+            "description": "Serialized maintained-engine peer statistics; count remains bounded.",
+            "type": "string"
+          },
+          "tracker_status": {
+            "description": "Tracker discovery state; does not imply successful announce telemetry.",
+            "type": "string"
+          },
+          "uploaded_bytes": {
+            "description": "Actual live upload counter, or its last recorded value after stopping.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "verified": {
+            "description": "Verified and durable pieces, never HTTP byte segments.",
+            "items": {
+              "type": "boolean"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "activity",
+          "verified",
+          "peers",
+          "uploaded_bytes",
+          "options",
+          "tracker_status"
+        ],
+        "type": "object"
+      },
       "TrafficPolicy": {
         "additionalProperties": false,
         "description": "Persistent payload policy shared by every backend. Null rates are unlimited.",
@@ -1198,6 +1535,16 @@
               "null"
             ]
           },
+          "per_job_upload_bps": {
+            "default": null,
+            "description": "Independent default upload cap for each sharing job.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "queue_allowed": {
             "default": true,
             "description": "Whether the queue runs outside matching queue windows.",
@@ -1207,6 +1554,16 @@
             "default": "UTC",
             "description": "IANA timezone, independent of the host's local zone.",
             "type": "string"
+          },
+          "upload_bps": {
+            "default": null,
+            "description": "Aggregate upload bytes/second for protocols that share files.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "windows": {
             "default": [],
@@ -2819,6 +3176,285 @@
               "text/plain": {
                 "schema": {
                   "type": "boolean"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Missing, expired or revoked bearer token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Host, Origin or scope rejected"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request deadline"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request body exceeds limit"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Rate, request or subscriber admission limit"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/v1/torrents": {
+      "post": {
+        "operationId": "add_torrent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TorrentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Missing, expired or revoked bearer token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Host, Origin or scope rejected"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request deadline"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request body exceeds limit"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Rate, request or subscriber admission limit"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/v1/torrents/inspect": {
+      "post": {
+        "operationId": "inspect_torrent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TorrentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentMetadata"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Missing, expired or revoked bearer token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Host, Origin or scope rejected"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request deadline"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request body exceeds limit"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Rate, request or subscriber admission limit"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/v1/torrents/{id}": {
+      "get": {
+        "operationId": "torrent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentSnapshot"
                 }
               }
             },

@@ -4,67 +4,71 @@ import type { Segment } from "./Segment";
 /**
  * Display metadata and durable progress for one job.
  */
-export type Job = { 
+export type Job = {
+/**
+ * Opaque protocol identifier; details are read through its app contract.
+ */
+protocol: string,
 /**
  * UUID.
  */
-id: string, 
+id: string,
 /**
  * Filename.
  */
-name: string, 
+name: string,
 /**
  * Source URL explicitly entered by the user.
  */
-url: string, 
+url: string,
 /**
  * Final destination.
  */
-destination: string, 
+destination: string,
 /**
  * Persisted state name.
  */
-state: string, 
+state: string,
 /**
  * Durable downloaded bytes.
  */
-bytes: number, 
+bytes: number,
 /**
  * Resource size, if known.
  */
-total: number | null, 
+total: number | null,
 /**
  * Measured durable bytes per second.
  */
-speed: number, 
+speed: number,
 /**
  * Priority.
  */
-priority: number, 
+priority: number,
 /**
  * Retry count.
  */
-retries: number, 
+retries: number,
 /**
  * Live transfer tasks; includes origin admission waits and retry backoff.
  */
-workers: number, 
+workers: number,
 /**
  * Last actionable engine error.
  */
-error: string | null, 
+error: string | null,
 /**
  * Strong validator, when available.
  */
-etag: string | null, 
+etag: string | null,
 /**
  * Last successful HTTP response status (session diagnostics).
  */
-response_status: number | null, 
+response_status: number | null,
 /**
  * Time to response headers, including origin admission and redirects.
  */
-response_latency_ms: number | null, 
+response_latency_ms: number | null,
 /**
  * Segment ownership and checkpoints.
  */

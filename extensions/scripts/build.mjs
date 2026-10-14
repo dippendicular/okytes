@@ -15,6 +15,8 @@ for (const browser of ["chromium", "firefox"]) {
     format: "iife",
     target: "es2022",
   });
+  for (const directory of ["brand", "icons"])
+    await cp(`shared/${directory}`, `${outdir}/${directory}`, { recursive: true });
   await cp(`${browser}/manifest.json`, `${outdir}/manifest.json`);
   for (const file of ["popup.html", "options.html", "style.css"])
     await cp(`shared/${file}`, `${outdir}/${file}`);

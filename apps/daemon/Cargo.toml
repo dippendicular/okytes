@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 okytes-core.workspace = true
+okytes-torrent-types.workspace = true
 okytes-persistence.workspace = true
 okytes-desktop-service = { version = "=0.1.0", path = "../desktop/service" }
 okytes-daemon-api = { version = "=0.1.0", path = "../../crates/daemon-api" }
@@ -30,6 +31,9 @@ anyhow.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 [dev-dependencies]
+okytes-transport-torrent.workspace = true
+librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls"] }
+base64 = "0.22"
 rcgen = "0.14"
 reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true

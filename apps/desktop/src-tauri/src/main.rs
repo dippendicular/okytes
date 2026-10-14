@@ -1,11 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use okytes_core::desktop::{Action, AddInput, DesktopService, Job, Settings, Snapshot};
-use okytes_desktop_service::Session;
+use okytes_core::desktop::{Action, AddInput, Job, Settings, Snapshot};
+use okytes_desktop_service::{AppService, Session};
 use std::sync::Arc;
 use tauri::{Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
-type Service = Arc<dyn DesktopService>;
+type Service = Arc<dyn AppService>;
 
 #[tauri::command]
 async fn pause_all(service: State<'_, Service>) -> Result<(), String> {
@@ -40,6 +40,30 @@ async fn set_settings(service: State<'_, Service>, settings: Settings) -> Result
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn inspect_torrent(
+    service: State<'_, Service>,
+    input: okytes_torrent_types::Input,
+) -> Result<okytes_torrent_types::Metadata, String> {
+    service
+        .inspect_torrent(input)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn add_torrent(
+    service: State<'_, Service>,
+    input: okytes_torrent_types::Input,
+) -> Result<String, String> {
+    service.add_torrent(input).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn torrent(
+    service: State<'_, Service>,
+    id: String,
+) -> Result<okytes_torrent_types::Snapshot, String> {
+    service.torrent(id).await.map_err(|e| e.to_string())
+}
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -53,7 +77,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             control,
             settings,
             set_settings,
-            pause_all
+            pause_all,
+            inspect_torrent,
+            add_torrent,
+            torrent
         ])
         .setup(|app| {
             let directory = std::env::var_os("OKYTES_DATA_DIR").map(std::path::PathBuf::from).unwrap_or(app.path().app_data_dir()?);

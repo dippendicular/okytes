@@ -16,6 +16,12 @@ use ts_rs::TS;
 #[serde(default, deny_unknown_fields)]
 #[ts(export)]
 pub struct TrafficPolicy {
+    /// Aggregate upload bytes/second for protocols that share files.
+    #[ts(type = "number | null")]
+    pub upload_bps: Option<u64>,
+    /// Independent default upload cap for each sharing job.
+    #[ts(type = "number | null")]
+    pub per_job_upload_bps: Option<u64>,
     /// Aggregate bytes/second across all jobs.
     #[ts(type = "number | null")]
     pub global_bps: Option<u64>,
@@ -34,6 +40,8 @@ pub struct TrafficPolicy {
 impl Default for TrafficPolicy {
     fn default() -> Self {
         Self {
+            upload_bps: None,
+            per_job_upload_bps: None,
             global_bps: None,
             per_job_bps: None,
             job_limits: vec![],
@@ -97,7 +105,9 @@ fn stricter(a: Option<u64>, b: Option<u64>) -> Option<u64> {
 impl TrafficPolicy {
     /// Validate bounds, UUID uniqueness, timezone and local windows before save.
     pub fn validate(&self) -> EngineResult<()> {
-        if !rate_valid(self.global_bps)
+        if !rate_valid(self.upload_bps)
+            || !rate_valid(self.per_job_upload_bps)
+            || !rate_valid(self.global_bps)
             || !rate_valid(self.per_job_bps)
             || self.windows.len() > 32
             || self.job_limits.len() > 128
@@ -128,6 +138,17 @@ impl TrafficPolicy {
             }
         }
         Ok(())
+    }
+    /// Build the separate upload direction while retaining queue-window gates.
+    pub fn upload_policy(&self) -> Self {
+        let mut upload = self.clone();
+        upload.global_bps = self.upload_bps;
+        upload.per_job_bps = self.per_job_upload_bps;
+        upload.job_limits.clear();
+        for window in &mut upload.windows {
+            window.global_bps = None;
+        }
+        upload
     }
     /// Evaluate from UTC rather than constructing ambiguous/nonexistent local
     /// timestamps. Fall-back repeated minutes both match; spring gaps do not.
@@ -268,6 +289,20 @@ impl TrafficController {
         now: Instant,
         wall: DateTime<Utc>,
     ) -> EngineResult<usize> {
+        self.take_limited(job, wanted, None, now, wall)
+    }
+    /// Additional protocol cap participates in the same atomic shared debit.
+    pub fn take_limited(
+        &self,
+        job: JobId,
+        wanted: usize,
+        cap: Option<u64>,
+        now: Instant,
+        wall: DateTime<Utc>,
+    ) -> EngineResult<usize> {
+        if !rate_valid(cap) {
+            return Err(invalid());
+        }
         let mut state = self.state.lock().map_err(|_| invalid())?;
         let policy = state.policy.effective(wall, job);
         if !policy.queue_allowed {
@@ -279,7 +314,7 @@ impl TrafficController {
             return Err(invalid());
         }
         let individual = state.jobs.entry(job).or_insert_with(|| Bucket::new(now));
-        individual.refill(policy.job_bps, now);
+        individual.refill(stricter(policy.job_bps, cap), now);
         let amount = wanted.min(global).min(individual.available());
         individual.debit(amount);
         state.global.debit(amount);

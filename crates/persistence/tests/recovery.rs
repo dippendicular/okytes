@@ -8,6 +8,7 @@ use proptest::prelude::*;
 use uuid::Uuid;
 fn job(id: Uuid) -> JobRecord {
     JobRecord {
+        protocol: "http".into(),
         capture_id: None,
         requires_session: false,
         use_server_filename: false,

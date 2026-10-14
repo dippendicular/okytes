@@ -17,6 +17,9 @@ use okytes_core::desktop::DesktopService;
 use okytes_daemon_api::contract::*;
 use okytes_desktop_service::Session;
 use okytes_persistence::SqliteStore;
+use okytes_torrent_types::{
+    Input as TorrentInput, Metadata as TorrentMetadata, Snapshot as TorrentSnapshot, TorrentService,
+};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -273,6 +276,9 @@ async fn guard(State(api): State<Arc<Api>>, mut request: Request, next: Next) ->
 pub fn router(api: Arc<Api>) -> Router {
     Router::new()
         .route("/v1/jobs", get(list).post(add))
+        .route("/v1/torrents", post(add_torrent))
+        .route("/v1/torrents/inspect", post(inspect_torrent))
+        .route("/v1/torrents/{id}", get(torrent))
         .route("/v1/jobs/{id}", get(job))
         .route("/v1/jobs/{id}/control", post(control))
         .route("/v1/submit", post(submit))
@@ -486,7 +492,7 @@ async fn spec() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi())
 }
 #[derive(OpenApi)]
-#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,records,record,config,set_config),components(schemas(Update,ApiError)),modifiers(&Security))]
+#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,records,record,config,set_config,add_torrent,inspect_torrent,torrent),components(schemas(Update,ApiError)),modifiers(&Security))]
 struct Contract;
 struct Security;
 impl utoipa::Modify for Security {
@@ -605,4 +611,36 @@ mod tests {
         assert!(matches!(stream.next().await, Some(Update::Resync)));
         assert!(matches!(stream.next().await, Some(Update::Resync)));
     }
+}
+
+#[utoipa::path(post,path="/v1/torrents",request_body=TorrentInput,responses((status=200,body=String)),security(("bearer"=[])))]
+async fn add_torrent(
+    State(api): State<Arc<Api>>,
+    axum::Extension(info): axum::Extension<TokenInfo>,
+    Json(input): Json<TorrentInput>,
+) -> Result<Json<String>, Response> {
+    destination(&api, info.scope, input.destination.as_deref()).await?;
+    api.session
+        .add_torrent(input)
+        .await
+        .map(Json)
+        .map_err(rejection)
+}
+#[utoipa::path(post,path="/v1/torrents/inspect",request_body=TorrentInput,responses((status=200,body=TorrentMetadata)),security(("bearer"=[])))]
+async fn inspect_torrent(
+    State(api): State<Arc<Api>>,
+    Json(input): Json<TorrentInput>,
+) -> Result<Json<TorrentMetadata>, Response> {
+    api.session
+        .inspect_torrent(input)
+        .await
+        .map(Json)
+        .map_err(rejection)
+}
+#[utoipa::path(get,path="/v1/torrents/{id}",params(("id"=String,Path)),responses((status=200,body=TorrentSnapshot)),security(("bearer"=[])))]
+async fn torrent(
+    State(api): State<Arc<Api>>,
+    Path(id): Path<String>,
+) -> Result<Json<TorrentSnapshot>, Response> {
+    api.session.torrent(id).await.map(Json).map_err(rejection)
 }
