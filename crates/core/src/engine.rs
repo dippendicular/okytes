@@ -18,7 +18,7 @@ use chrono::Utc;
 use futures::{stream::FuturesUnordered, StreamExt};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -41,15 +41,38 @@ pub struct Engine {
     jobs: Semaphore,
     active: Mutex<HashSet<JobId>>,
     events: broadcast::Sender<EngineEvent>,
+    responses: Mutex<HashMap<JobId, (u16, f64)>>,
+    full_progress: Mutex<HashMap<JobId, u64>>,
+    workers: Mutex<HashMap<JobId, u32>>,
 }
 struct Active<'a> {
     ids: &'a Mutex<HashSet<JobId>>,
     id: JobId,
+    full_progress: &'a Mutex<HashMap<JobId, u64>>,
+}
+struct Worker<'a> {
+    counts: &'a Mutex<HashMap<JobId, u32>>,
+    id: JobId,
+}
+impl Drop for Worker<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut counts) = self.counts.lock() {
+            if let Some(count) = counts.get_mut(&self.id) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    counts.remove(&self.id);
+                }
+            }
+        }
+    }
 }
 impl Drop for Active<'_> {
     fn drop(&mut self) {
         if let Ok(mut ids) = self.ids.lock() {
             ids.remove(&self.id);
+        }
+        if let Ok(mut progress) = self.full_progress.lock() {
+            progress.remove(&self.id);
         }
     }
 }
@@ -78,7 +101,49 @@ impl Engine {
             files,
             active: Mutex::new(HashSet::new()),
             events,
+            responses: Mutex::new(HashMap::new()),
+            full_progress: Mutex::new(HashMap::new()),
+            workers: Mutex::new(HashMap::new()),
         })
+    }
+    /// Last successful response status and time to headers, retained for at most 256 jobs.
+    pub fn response_diagnostic(&self, id: JobId) -> Option<(u16, f64)> {
+        self.responses.lock().ok()?.get(&id).copied()
+    }
+    /// Live durable bytes for a non-resumable full stream. This is display data,
+    /// never a resume checkpoint, and is discarded when its worker releases ownership.
+    pub fn live_full_bytes(&self, id: JobId) -> Option<u64> {
+        self.full_progress.lock().ok()?.get(&id).copied()
+    }
+    /// Live transfer tasks, including admission waits and retry backoff, excluding
+    /// probing and verification. Persisted segment states are not worker counts.
+    pub fn active_workers(&self, id: JobId) -> u32 {
+        self.workers
+            .lock()
+            .ok()
+            .and_then(|counts| counts.get(&id).copied())
+            .unwrap_or(0)
+    }
+    fn worker(&self, id: JobId) -> EngineResult<Worker<'_>> {
+        let mut counts = self
+            .workers
+            .lock()
+            .map_err(|e| EngineError::Scheduler(e.to_string()))?;
+        *counts.entry(id).or_default() += 1;
+        Ok(Worker {
+            counts: &self.workers,
+            id,
+        })
+    }
+    fn response_received(&self, id: JobId, status: u16, started: Instant) {
+        if let Ok(mut responses) = self.responses.lock() {
+            if responses.len() >= 256 && !responses.contains_key(&id) {
+                if let Some(old) = responses.keys().next().copied() {
+                    responses.remove(&old);
+                }
+            }
+            responses.insert(id, (status, started.elapsed().as_secs_f64() * 1000.0));
+        }
     }
     async fn transition(&self, id: JobId, state: JobState) -> EngineResult<JobRecord> {
         let old = self.status(id).await?.state;
@@ -118,6 +183,7 @@ impl Engine {
         let _active = Active {
             ids: &self.active,
             id,
+            full_progress: &self.full_progress,
         };
         let state = self.status(id).await?.state;
         if state == JobState::Cancelled {
@@ -455,6 +521,7 @@ impl Engine {
         job: &JobRecord,
         mut segment: SegmentRecord,
     ) -> EngineResult<(SegmentRecord, u64)> {
+        let _worker = self.worker(job.id)?;
         let before = segment.bytes_downloaded;
         let end = segment.end.min(
             segment
@@ -465,6 +532,7 @@ impl Engine {
             if !self.running(job.id).await? {
                 return Ok((segment, 0));
             }
+            let response_started = Instant::now();
             let Some(response) = self
                 .controlled(
                     job.id,
@@ -482,6 +550,7 @@ impl Engine {
             };
             let result = match response {
                 Ok(response) => {
+                    self.response_received(job.id, response.status, response_started);
                     if segment.state == SegmentState::Failed {
                         segment.state = segment.state.transition(SegmentState::Pending, job.id)?;
                     }
@@ -603,12 +672,22 @@ impl Engine {
             },
         )
         .await?;
+        if !persist {
+            if let Ok(mut progress) = self.full_progress.lock() {
+                progress.insert(next.job_id, next.bytes_downloaded);
+            }
+        }
         *segment = next;
         Ok(())
     }
     async fn full(&self, job: &JobRecord) -> EngineResult<()> {
+        let _worker = self.worker(job.id)?;
+        if let Ok(mut progress) = self.full_progress.lock() {
+            progress.insert(job.id, 0);
+        }
         remove_partial(&job.partial_path).await?;
         drop(self.files.create(&job.partial_path).await?);
+        let response_started = Instant::now();
         let Some(response) = self
             .controlled(
                 job.id,
@@ -623,6 +702,7 @@ impl Engine {
             job_id: job.id,
             source: Box::new(source),
         })?;
+        self.response_received(job.id, response.status, response_started);
         let mut segment = SegmentRecord {
             id: Uuid::new_v4(),
             job_id: job.id,
@@ -741,7 +821,8 @@ async fn hash_open_file<F: FnMut() -> R, R: Future<Output = EngineResult<bool>>>
     }
     Ok(Some(format!("{:x}", hash.finalize())))
 }
-fn sanitize(name: &str) -> String {
+/// Sanitize a suggested filename across supported platform naming rules.
+pub fn sanitize(name: &str) -> String {
     let name: String = name
         .chars()
         .take(180)

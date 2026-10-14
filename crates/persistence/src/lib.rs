@@ -31,6 +31,38 @@ pub struct EngineLease {
 }
 
 impl SqliteStore {
+    /// Read a bounded admission window without scanning terminal history.
+    pub fn runnable(&self) -> Reply<Vec<JobRecord>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare("SELECT record FROM jobs WHERE state IN ('queued','probing','downloading','verifying') ORDER BY priority DESC,rowid ASC LIMIT 64").map_err(db)?;
+            let rows = stmt.query_map([], |r|r.get::<_,String>(0)).map_err(db)?;
+            rows.map(|row|serde_json::from_str(&row.map_err(db)?).map_err(db)).collect()
+        })
+    }
+    /// Read a named non-secret preference from the serialized writer.
+    pub fn preference(&self, key: &str) -> Reply<Option<String>> {
+        let key = key.to_owned();
+        self.call(move |conn| {
+            use rusqlite::OptionalExtension;
+            conn.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(db)
+        })
+    }
+
+    /// Persist a bounded non-secret preference.
+    pub fn set_preference(&self, key: &str, value: &str) -> Reply<()> {
+        let key = key.to_owned();
+        let value = value.to_owned();
+        self.call(move |conn| {
+            if key.len() > 64 || value.len() > 16384 { return Err(db("preference exceeds size limit")); }
+            conn.execute("INSERT INTO settings VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value]).map_err(db)?;
+            Ok(())
+        })
+    }
+
     /// Open/migrate a database and launch its bounded writer.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, EngineError> {
         let path = path.as_ref().to_owned();
@@ -65,6 +97,7 @@ impl SqliteStore {
                     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                     PRAGMA user_version=1;").map_err(db)?;}
                 else if version!=1 {return Err(PersistenceError::Migration(format!("unsupported schema version {version}")).into());}
+                conn.execute_batch("CREATE INDEX IF NOT EXISTS jobs_runnable ON jobs(priority DESC) WHERE state IN ('queued','probing','downloading','verifying');").map_err(db)?;
                 Ok(conn)
             })();
             match conn {

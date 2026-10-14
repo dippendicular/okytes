@@ -21,6 +21,7 @@
 //! This crate must never depend on a GUI framework, Tauri, browser APIs, or
 //! OS-specific crates. Platform code lives behind traits implemented outside core.
 
+pub mod desktop;
 pub mod engine;
 pub mod error;
 pub mod files;

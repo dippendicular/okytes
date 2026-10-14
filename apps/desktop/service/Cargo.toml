@@ -1,0 +1,20 @@
+[package]
+name = "okytes-desktop-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+okytes-core.workspace = true
+okytes-persistence.workspace = true
+okytes-transport-http.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+url.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+okytes-test-support.workspace = true
+sha2.workspace = true
