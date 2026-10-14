@@ -1,0 +1,106 @@
+{
+  "scenario": "many-small",
+  "mode": "adaptive",
+  "iteration": 2,
+  "seed": 42,
+  "file_bytes": 65536,
+  "origin": {
+    "connection_bps": null,
+    "disconnect_every": 0,
+    "frame_bytes": 65536,
+    "latency_ms": 20,
+    "max_active": null,
+    "quantum_bytes": 262144,
+    "shared_bps": null
+  },
+  "worker": {
+    "startup_ms": 104.7894,
+    "transfer_seconds": 0.8638077,
+    "bytes": 1310720,
+    "completed": 20,
+    "jobs": 20,
+    "resume_correct": null,
+    "errors": []
+  },
+  "effective_bps": 1517374.7582940047,
+  "sampled_peak_rss_bytes": 17690624,
+  "sampled_cpu_ms": 656,
+  "peak_origin_bodies": 3,
+  "samples": [
+    {
+      "elapsed_ms": 59,
+      "rss_bytes": 14528512,
+      "cpu_ms": 31
+    },
+    {
+      "elapsed_ms": 125,
+      "rss_bytes": 16519168,
+      "cpu_ms": 78
+    },
+    {
+      "elapsed_ms": 193,
+      "rss_bytes": 17080320,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 260,
+      "rss_bytes": 17395712,
+      "cpu_ms": 140
+    },
+    {
+      "elapsed_ms": 333,
+      "rss_bytes": 17403904,
+      "cpu_ms": 203
+    },
+    {
+      "elapsed_ms": 392,
+      "rss_bytes": 17514496,
+      "cpu_ms": 234
+    },
+    {
+      "elapsed_ms": 466,
+      "rss_bytes": 17489920,
+      "cpu_ms": 265
+    },
+    {
+      "elapsed_ms": 525,
+      "rss_bytes": 17608704,
+      "cpu_ms": 328
+    },
+    {
+      "elapsed_ms": 599,
+      "rss_bytes": 17514496,
+      "cpu_ms": 406
+    },
+    {
+      "elapsed_ms": 663,
+      "rss_bytes": 17547264,
+      "cpu_ms": 468
+    },
+    {
+      "elapsed_ms": 748,
+      "rss_bytes": 17641472,
+      "cpu_ms": 500
+    },
+    {
+      "elapsed_ms": 823,
+      "rss_bytes": 17690624,
+      "cpu_ms": 531
+    },
+    {
+      "elapsed_ms": 956,
+      "rss_bytes": 17637376,
+      "cpu_ms": 562
+    },
+    {
+      "elapsed_ms": 1039,
+      "rss_bytes": 17633280,
+      "cpu_ms": 656
+    },
+    {
+      "elapsed_ms": 1123,
+      "rss_bytes": 17633280,
+      "cpu_ms": 656
+    }
+  ]
+}

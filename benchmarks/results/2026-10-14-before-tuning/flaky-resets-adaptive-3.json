@@ -1,0 +1,381 @@
+{
+  "scenario": "flaky-resets",
+  "mode": "adaptive",
+  "iteration": 3,
+  "seed": 42,
+  "file_bytes": 8388608,
+  "origin": {
+    "connection_bps": null,
+    "disconnect_every": 7,
+    "frame_bytes": 65536,
+    "latency_ms": 0,
+    "max_active": null,
+    "quantum_bytes": 262144,
+    "shared_bps": 4194304
+  },
+  "worker": {
+    "startup_ms": 80.921,
+    "transfer_seconds": 3.8633293,
+    "bytes": 8388608,
+    "completed": 1,
+    "jobs": 1,
+    "resume_correct": true,
+    "errors": []
+  },
+  "effective_bps": 2171341.697431798,
+  "sampled_peak_rss_bytes": 17940480,
+  "sampled_cpu_ms": 828,
+  "peak_origin_bodies": 2,
+  "samples": [
+    {
+      "elapsed_ms": 22,
+      "rss_bytes": 16297984,
+      "cpu_ms": 15
+    },
+    {
+      "elapsed_ms": 69,
+      "rss_bytes": 16355328,
+      "cpu_ms": 46
+    },
+    {
+      "elapsed_ms": 135,
+      "rss_bytes": 17080320,
+      "cpu_ms": 62
+    },
+    {
+      "elapsed_ms": 196,
+      "rss_bytes": 17305600,
+      "cpu_ms": 62
+    },
+    {
+      "elapsed_ms": 264,
+      "rss_bytes": 17285120,
+      "cpu_ms": 93
+    },
+    {
+      "elapsed_ms": 332,
+      "rss_bytes": 17272832,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 398,
+      "rss_bytes": 17387520,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 460,
+      "rss_bytes": 17338368,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 514,
+      "rss_bytes": 17387520,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 579,
+      "rss_bytes": 17403904,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 646,
+      "rss_bytes": 17272832,
+      "cpu_ms": 140
+    },
+    {
+      "elapsed_ms": 714,
+      "rss_bytes": 17469440,
+      "cpu_ms": 156
+    },
+    {
+      "elapsed_ms": 774,
+      "rss_bytes": 17350656,
+      "cpu_ms": 156
+    },
+    {
+      "elapsed_ms": 835,
+      "rss_bytes": 17408000,
+      "cpu_ms": 156
+    },
+    {
+      "elapsed_ms": 901,
+      "rss_bytes": 17293312,
+      "cpu_ms": 171
+    },
+    {
+      "elapsed_ms": 957,
+      "rss_bytes": 17448960,
+      "cpu_ms": 171
+    },
+    {
+      "elapsed_ms": 1009,
+      "rss_bytes": 17313792,
+      "cpu_ms": 171
+    },
+    {
+      "elapsed_ms": 1065,
+      "rss_bytes": 17571840,
+      "cpu_ms": 171
+    },
+    {
+      "elapsed_ms": 1131,
+      "rss_bytes": 17313792,
+      "cpu_ms": 187
+    },
+    {
+      "elapsed_ms": 1196,
+      "rss_bytes": 17444864,
+      "cpu_ms": 218
+    },
+    {
+      "elapsed_ms": 1267,
+      "rss_bytes": 17379328,
+      "cpu_ms": 234
+    },
+    {
+      "elapsed_ms": 1333,
+      "rss_bytes": 17514496,
+      "cpu_ms": 250
+    },
+    {
+      "elapsed_ms": 1401,
+      "rss_bytes": 17543168,
+      "cpu_ms": 265
+    },
+    {
+      "elapsed_ms": 1461,
+      "rss_bytes": 17317888,
+      "cpu_ms": 281
+    },
+    {
+      "elapsed_ms": 1524,
+      "rss_bytes": 17477632,
+      "cpu_ms": 296
+    },
+    {
+      "elapsed_ms": 1586,
+      "rss_bytes": 17403904,
+      "cpu_ms": 296
+    },
+    {
+      "elapsed_ms": 1640,
+      "rss_bytes": 17375232,
+      "cpu_ms": 312
+    },
+    {
+      "elapsed_ms": 1689,
+      "rss_bytes": 17555456,
+      "cpu_ms": 328
+    },
+    {
+      "elapsed_ms": 1741,
+      "rss_bytes": 17350656,
+      "cpu_ms": 343
+    },
+    {
+      "elapsed_ms": 1809,
+      "rss_bytes": 17555456,
+      "cpu_ms": 359
+    },
+    {
+      "elapsed_ms": 1878,
+      "rss_bytes": 17473536,
+      "cpu_ms": 359
+    },
+    {
+      "elapsed_ms": 1945,
+      "rss_bytes": 17489920,
+      "cpu_ms": 359
+    },
+    {
+      "elapsed_ms": 2003,
+      "rss_bytes": 17551360,
+      "cpu_ms": 359
+    },
+    {
+      "elapsed_ms": 2070,
+      "rss_bytes": 17485824,
+      "cpu_ms": 375
+    },
+    {
+      "elapsed_ms": 2154,
+      "rss_bytes": 17416192,
+      "cpu_ms": 375
+    },
+    {
+      "elapsed_ms": 2221,
+      "rss_bytes": 17477632,
+      "cpu_ms": 390
+    },
+    {
+      "elapsed_ms": 2277,
+      "rss_bytes": 17481728,
+      "cpu_ms": 390
+    },
+    {
+      "elapsed_ms": 2348,
+      "rss_bytes": 17547264,
+      "cpu_ms": 390
+    },
+    {
+      "elapsed_ms": 2421,
+      "rss_bytes": 17465344,
+      "cpu_ms": 421
+    },
+    {
+      "elapsed_ms": 2482,
+      "rss_bytes": 17600512,
+      "cpu_ms": 437
+    },
+    {
+      "elapsed_ms": 2545,
+      "rss_bytes": 17358848,
+      "cpu_ms": 437
+    },
+    {
+      "elapsed_ms": 2602,
+      "rss_bytes": 17551360,
+      "cpu_ms": 437
+    },
+    {
+      "elapsed_ms": 2658,
+      "rss_bytes": 17371136,
+      "cpu_ms": 453
+    },
+    {
+      "elapsed_ms": 2722,
+      "rss_bytes": 17661952,
+      "cpu_ms": 484
+    },
+    {
+      "elapsed_ms": 2788,
+      "rss_bytes": 17940480,
+      "cpu_ms": 515
+    },
+    {
+      "elapsed_ms": 2846,
+      "rss_bytes": 17649664,
+      "cpu_ms": 515
+    },
+    {
+      "elapsed_ms": 2905,
+      "rss_bytes": 17580032,
+      "cpu_ms": 531
+    },
+    {
+      "elapsed_ms": 2970,
+      "rss_bytes": 17833984,
+      "cpu_ms": 562
+    },
+    {
+      "elapsed_ms": 3026,
+      "rss_bytes": 17694720,
+      "cpu_ms": 562
+    },
+    {
+      "elapsed_ms": 3088,
+      "rss_bytes": 17686528,
+      "cpu_ms": 562
+    },
+    {
+      "elapsed_ms": 3147,
+      "rss_bytes": 17612800,
+      "cpu_ms": 578
+    },
+    {
+      "elapsed_ms": 3203,
+      "rss_bytes": 17682432,
+      "cpu_ms": 593
+    },
+    {
+      "elapsed_ms": 3262,
+      "rss_bytes": 17612800,
+      "cpu_ms": 609
+    },
+    {
+      "elapsed_ms": 3307,
+      "rss_bytes": 17682432,
+      "cpu_ms": 609
+    },
+    {
+      "elapsed_ms": 3356,
+      "rss_bytes": 17481728,
+      "cpu_ms": 609
+    },
+    {
+      "elapsed_ms": 3405,
+      "rss_bytes": 17682432,
+      "cpu_ms": 625
+    },
+    {
+      "elapsed_ms": 3446,
+      "rss_bytes": 17481728,
+      "cpu_ms": 625
+    },
+    {
+      "elapsed_ms": 3489,
+      "rss_bytes": 17547264,
+      "cpu_ms": 625
+    },
+    {
+      "elapsed_ms": 3529,
+      "rss_bytes": 17494016,
+      "cpu_ms": 640
+    },
+    {
+      "elapsed_ms": 3571,
+      "rss_bytes": 17629184,
+      "cpu_ms": 640
+    },
+    {
+      "elapsed_ms": 3621,
+      "rss_bytes": 17563648,
+      "cpu_ms": 640
+    },
+    {
+      "elapsed_ms": 3670,
+      "rss_bytes": 17686528,
+      "cpu_ms": 656
+    },
+    {
+      "elapsed_ms": 3713,
+      "rss_bytes": 17481728,
+      "cpu_ms": 656
+    },
+    {
+      "elapsed_ms": 3755,
+      "rss_bytes": 17551360,
+      "cpu_ms": 656
+    },
+    {
+      "elapsed_ms": 3808,
+      "rss_bytes": 17629184,
+      "cpu_ms": 687
+    },
+    {
+      "elapsed_ms": 3860,
+      "rss_bytes": 17629184,
+      "cpu_ms": 734
+    },
+    {
+      "elapsed_ms": 3908,
+      "rss_bytes": 17637376,
+      "cpu_ms": 765
+    },
+    {
+      "elapsed_ms": 3958,
+      "rss_bytes": 17637376,
+      "cpu_ms": 812
+    },
+    {
+      "elapsed_ms": 4005,
+      "rss_bytes": 17485824,
+      "cpu_ms": 828
+    },
+    {
+      "elapsed_ms": 4055,
+      "rss_bytes": 17485824,
+      "cpu_ms": 828
+    }
+  ]
+}

@@ -74,6 +74,11 @@ enum Command {
         #[arg(long)]
         set: Option<PathBuf>,
     },
+    /// Read or replace persisted bandwidth and recurring schedule policy.
+    Traffic {
+        #[arg(long)]
+        set: Option<PathBuf>,
+    },
 }
 
 fn validate(c: &EngineConfig) -> Result<()> {
@@ -188,6 +193,15 @@ async fn execute(args: Args) -> Result<()> {
             job.priority = priority;
             store.save_job(&job).await?;
             print(job, args.json)?;
+        }
+        Command::Traffic { set } => {
+            let mut config = store.config().await?;
+            if let Some(path) = set {
+                config.traffic = serde_json::from_slice(&std::fs::read(path)?)?;
+                config.validate()?;
+                store.set_config(&config).await?;
+            }
+            print(config.traffic, args.json)?;
         }
         Command::Config { set } => {
             if let Some(path) = set {
@@ -338,6 +352,19 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
                 .control(id.to_string(), Action::Priority(priority))
                 .await?;
             print(remote_record(&client, id).await?, args.json)?;
+        }
+        Command::Traffic { set } => {
+            let mut config: EngineConfig = client
+                .request(Method::GET, "v1/config", None::<&()>)
+                .await?;
+            if let Some(path) = set {
+                config.traffic = serde_json::from_slice(&std::fs::read(path)?)?;
+                config.validate()?;
+                client
+                    .request::<()>(Method::PUT, "v1/config", Some(&config))
+                    .await?;
+            }
+            print(config.traffic, args.json)?;
         }
         Command::Config { set } => {
             if let Some(path) = set {

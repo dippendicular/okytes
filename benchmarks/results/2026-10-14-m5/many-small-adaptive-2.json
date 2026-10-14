@@ -1,0 +1,123 @@
+{
+  "scenario": "many-small",
+  "mode": "adaptive",
+  "iteration": 2,
+  "seed": 42,
+  "file_bytes": 65536,
+  "origin": {
+    "connection_bps": null,
+    "disconnect_every": 0,
+    "frame_bytes": 65536,
+    "latency_ms": 20,
+    "max_active": null,
+    "quantum_bytes": 262144,
+    "shared_bps": null
+  },
+  "worker": {
+    "startup_ms": 65.4744,
+    "transfer_seconds": 0.6247686,
+    "bytes": 1310720,
+    "completed": 20,
+    "jobs": 20,
+    "resume_correct": null,
+    "resumed_checkpoint_bytes": null,
+    "errors": []
+  },
+  "effective_bps": 2097928.737135637,
+  "sampled_peak_rss_bytes": 19529728,
+  "sampled_cpu_ms": 296,
+  "process_startup_ms": 92.1082,
+  "peak_origin_bodies": 4,
+  "samples": [
+    {
+      "elapsed_ms": 21,
+      "rss_bytes": 17731584,
+      "cpu_ms": 15
+    },
+    {
+      "elapsed_ms": 71,
+      "rss_bytes": 17985536,
+      "cpu_ms": 31
+    },
+    {
+      "elapsed_ms": 108,
+      "rss_bytes": 18702336,
+      "cpu_ms": 46
+    },
+    {
+      "elapsed_ms": 146,
+      "rss_bytes": 18841600,
+      "cpu_ms": 46
+    },
+    {
+      "elapsed_ms": 192,
+      "rss_bytes": 18952192,
+      "cpu_ms": 62
+    },
+    {
+      "elapsed_ms": 234,
+      "rss_bytes": 19009536,
+      "cpu_ms": 93
+    },
+    {
+      "elapsed_ms": 287,
+      "rss_bytes": 19529728,
+      "cpu_ms": 93
+    },
+    {
+      "elapsed_ms": 335,
+      "rss_bytes": 19050496,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 382,
+      "rss_bytes": 19025920,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 427,
+      "rss_bytes": 18882560,
+      "cpu_ms": 125
+    },
+    {
+      "elapsed_ms": 483,
+      "rss_bytes": 19046400,
+      "cpu_ms": 156
+    },
+    {
+      "elapsed_ms": 527,
+      "rss_bytes": 19124224,
+      "cpu_ms": 156
+    },
+    {
+      "elapsed_ms": 576,
+      "rss_bytes": 19066880,
+      "cpu_ms": 171
+    },
+    {
+      "elapsed_ms": 617,
+      "rss_bytes": 19329024,
+      "cpu_ms": 187
+    },
+    {
+      "elapsed_ms": 678,
+      "rss_bytes": 19103744,
+      "cpu_ms": 250
+    },
+    {
+      "elapsed_ms": 738,
+      "rss_bytes": 19062784,
+      "cpu_ms": 281
+    },
+    {
+      "elapsed_ms": 786,
+      "rss_bytes": 19062784,
+      "cpu_ms": 281
+    },
+    {
+      "elapsed_ms": 847,
+      "rss_bytes": 32768,
+      "cpu_ms": 296
+    }
+  ]
+}

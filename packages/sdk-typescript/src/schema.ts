@@ -344,10 +344,14 @@ export interface components {
              * @description EWMA smoothing factor for throughput measurement (0.0–1.0).
              */
             ewma_alpha: number;
+            /** @description Fixed worker count for reproducible controls; null enables adaptation. */
+            fixed_concurrency?: number | null;
             /** @description Maximum concurrent downloads. */
             max_concurrent_jobs: number;
             /** @description Maximum connections per origin (host:port). */
             max_connections_per_origin: number;
+            /** @description Aggregate transport connections, including probes and redirected bodies. */
+            max_connections_total?: number;
             /**
              * Format: int32
              * @description Maximum retry attempts per segment.
@@ -381,6 +385,8 @@ export interface components {
              * @description Maximum backoff delay in milliseconds.
              */
             retry_max_delay_ms: number;
+            /** @description Live payload limits and recurring queue/bandwidth windows. */
+            traffic?: components["schemas"]["TrafficPolicy"];
             /** @description Bounded buffer size for write operations in bytes. */
             write_buffer_size: number;
         };
@@ -485,6 +491,16 @@ export interface components {
              * @description Live transfer tasks; includes origin admission waits and retry backoff.
              */
             workers: number;
+        };
+        /** @description Per-job payload override. Removing an override restores the default rate. */
+        JobLimit: {
+            /**
+             * Format: int64
+             * @description Positive bytes/second, or null for an unlimited job.
+             */
+            bps?: number | null;
+            /** @description UUID of the job to limit. */
+            id: string;
         };
         /** @description Persistent metadata for a download job. */
         JobRecord: {
@@ -617,6 +633,31 @@ export interface components {
             version: number;
         };
         /**
+         * @description Recurring window. Start is inclusive, end exclusive; overnight windows
+         *     belong to their starting weekday. Overlapping rules use the stricter limit.
+         */
+        ScheduleWindow: {
+            /** @description Monday=0 through Sunday=6; at least one distinct day. */
+            days: number[];
+            /**
+             * Format: int32
+             * @description Local end minute, 0..1440; must differ from start.
+             */
+            end_minute: number;
+            /**
+             * Format: int64
+             * @description Optional aggregate cap applied in addition to the base cap.
+             */
+            global_bps?: number | null;
+            /** @description Null leaves queue behavior unchanged; false closes the queue. */
+            queue_allowed?: boolean | null;
+            /**
+             * Format: int32
+             * @description Local start minute, 0..1439.
+             */
+            start_minute: number;
+        };
+        /**
          * @description Monotonic capability hierarchy; control cannot manage token credentials.
          * @enum {string}
          */
@@ -654,6 +695,8 @@ export interface components {
             notifications: boolean;
             /** @description Light, dark or system. */
             theme: string;
+            /** @description Shared runtime bandwidth and queue schedule policy. */
+            traffic?: components["schemas"]["TrafficPolicy"];
             /**
              * Format: int32
              * @description Schema version, currently one.
@@ -698,6 +741,41 @@ export interface components {
             revoked: boolean;
             /** @description Effective capability scope. */
             scope: components["schemas"]["Scope"];
+        };
+        /** @description Persistent payload policy shared by every backend. Null rates are unlimited. */
+        TrafficPolicy: {
+            /**
+             * Format: int64
+             * @description Aggregate bytes/second across all jobs.
+             * @default null
+             */
+            global_bps: number | null;
+            /**
+             * @description Explicit overrides, at most 128 unique job UUIDs.
+             * @default []
+             */
+            job_limits: components["schemas"]["JobLimit"][];
+            /**
+             * Format: int64
+             * @description Default bytes/second for each job independently.
+             * @default null
+             */
+            per_job_bps: number | null;
+            /**
+             * @description Whether the queue runs outside matching queue windows.
+             * @default true
+             */
+            queue_allowed: boolean;
+            /**
+             * @description IANA timezone, independent of the host's local zone.
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * @description At most 32 recurring local-time windows.
+             * @default []
+             */
+            windows: components["schemas"]["ScheduleWindow"][];
         };
         /** @description Bounded stream notifications. Clients must replace snapshots on Resync. */
         Update: {

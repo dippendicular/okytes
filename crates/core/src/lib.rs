@@ -24,11 +24,13 @@
 pub mod desktop;
 pub mod engine;
 pub mod error;
+pub mod fairness;
 pub mod files;
 pub mod range;
 pub mod scheduler;
 pub mod service;
 pub mod state;
 pub mod store;
+pub mod traffic;
 pub mod transport;
 pub mod types;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { TrafficSettings, defaultTraffic } from "./TrafficSettings";
 import {
   api,
   bytes,
@@ -843,6 +844,10 @@ export function App() {
                 ))}
               </select>
             </label>
+            <TrafficSettings
+              policy={settings.traffic ?? defaultTraffic}
+              onChange={(traffic) => setSettings({ ...settings, traffic })}
+            />
             <label className="checkbox">
               <input
                 type="checkbox"

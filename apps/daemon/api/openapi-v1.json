@@ -303,6 +303,14 @@
             "format": "double",
             "type": "number"
           },
+          "fixed_concurrency": {
+            "description": "Fixed worker count for reproducible controls; null enables adaptation.",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "max_concurrent_jobs": {
             "description": "Maximum concurrent downloads.",
             "minimum": 0,
@@ -310,6 +318,11 @@
           },
           "max_connections_per_origin": {
             "description": "Maximum connections per origin (host:port).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_connections_total": {
+            "description": "Aggregate transport connections, including probes and redirected bodies.",
             "minimum": 0,
             "type": "integer"
           },
@@ -353,6 +366,10 @@
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "traffic": {
+            "$ref": "#/components/schemas/TrafficPolicy",
+            "description": "Live payload limits and recurring queue/bandwidth windows."
           },
           "write_buffer_size": {
             "description": "Bounded buffer size for write operations in bytes.",
@@ -623,6 +640,29 @@
           "retries",
           "workers",
           "segments"
+        ],
+        "type": "object"
+      },
+      "JobLimit": {
+        "additionalProperties": false,
+        "description": "Per-job payload override. Removing an override restores the default rate.",
+        "properties": {
+          "bps": {
+            "description": "Positive bytes/second, or null for an unlimited job.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "UUID of the job to limit.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ],
         "type": "object"
       },
@@ -897,6 +937,55 @@
         ],
         "type": "object"
       },
+      "ScheduleWindow": {
+        "additionalProperties": false,
+        "description": "Recurring window. Start is inclusive, end exclusive; overnight windows\nbelong to their starting weekday. Overlapping rules use the stricter limit.",
+        "properties": {
+          "days": {
+            "description": "Monday=0 through Sunday=6; at least one distinct day.",
+            "items": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "end_minute": {
+            "description": "Local end minute, 0..1440; must differ from start.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "global_bps": {
+            "description": "Optional aggregate cap applied in addition to the base cap.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "queue_allowed": {
+            "description": "Null leaves queue behavior unchanged; false closes the queue.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "start_minute": {
+            "description": "Local start minute, 0..1439.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "days",
+          "start_minute",
+          "end_minute"
+        ],
+        "type": "object"
+      },
       "Scope": {
         "description": "Monotonic capability hierarchy; control cannot manage token credentials.",
         "enum": [
@@ -957,6 +1046,10 @@
           "theme": {
             "description": "Light, dark or system.",
             "type": "string"
+          },
+          "traffic": {
+            "$ref": "#/components/schemas/TrafficPolicy",
+            "description": "Shared runtime bandwidth and queue schedule policy."
           },
           "version": {
             "description": "Schema version, currently one.",
@@ -1071,6 +1164,59 @@
           "expires_at",
           "revoked"
         ],
+        "type": "object"
+      },
+      "TrafficPolicy": {
+        "additionalProperties": false,
+        "description": "Persistent payload policy shared by every backend. Null rates are unlimited.",
+        "properties": {
+          "global_bps": {
+            "default": null,
+            "description": "Aggregate bytes/second across all jobs.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "job_limits": {
+            "default": [],
+            "description": "Explicit overrides, at most 128 unique job UUIDs.",
+            "items": {
+              "$ref": "#/components/schemas/JobLimit"
+            },
+            "type": "array"
+          },
+          "per_job_bps": {
+            "default": null,
+            "description": "Default bytes/second for each job independently.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "queue_allowed": {
+            "default": true,
+            "description": "Whether the queue runs outside matching queue windows.",
+            "type": "boolean"
+          },
+          "timezone": {
+            "default": "UTC",
+            "description": "IANA timezone, independent of the host's local zone.",
+            "type": "string"
+          },
+          "windows": {
+            "default": [],
+            "description": "At most 32 recurring local-time windows.",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleWindow"
+            },
+            "type": "array"
+          }
+        },
         "type": "object"
       },
       "Update": {

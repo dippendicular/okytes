@@ -27,6 +27,9 @@ pub struct Submit {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct Settings {
+    /// Shared runtime bandwidth and queue schedule policy.
+    #[serde(default)]
+    pub traffic: crate::traffic::TrafficPolicy,
     /// Schema version, currently one.
     pub version: u32,
     /// Absolute default destination directory.

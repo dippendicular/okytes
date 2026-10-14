@@ -45,11 +45,14 @@ pub struct Engine {
     full_progress: Mutex<HashMap<JobId, u64>>,
     workers: Mutex<HashMap<JobId, u32>>,
     sessions: Mutex<HashMap<JobId, Vec<(String, String)>>>,
+    traffic: crate::traffic::TrafficController,
+    fair: Arc<crate::fairness::FairGate>,
 }
 struct Active<'a> {
     ids: &'a Mutex<HashSet<JobId>>,
     id: JobId,
     full_progress: &'a Mutex<HashMap<JobId, u64>>,
+    traffic: &'a crate::traffic::TrafficController,
 }
 struct Worker<'a> {
     counts: &'a Mutex<HashMap<JobId, u32>>,
@@ -69,6 +72,7 @@ impl Drop for Worker<'_> {
 }
 impl Drop for Active<'_> {
     fn drop(&mut self) {
+        self.traffic.release(self.id);
         if let Ok(mut ids) = self.ids.lock() {
             ids.remove(&self.id);
         }
@@ -95,6 +99,11 @@ impl Engine {
         config.validate()?;
         let (events, _) = broadcast::channel(config.channel_capacity.max(1));
         Ok(Self {
+            fair: crate::fairness::FairGate::new(
+                config.max_connections_total,
+                config.max_connections_per_origin,
+            ),
+            traffic: crate::traffic::TrafficController::new(config.traffic.clone())?,
             jobs: Semaphore::new(config.max_concurrent_jobs.max(1)),
             config,
             transport,
@@ -107,6 +116,14 @@ impl Engine {
             workers: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
         })
+    }
+    /// Apply persisted payload preferences without replacing running workers.
+    pub fn set_traffic(&self, policy: crate::traffic::TrafficPolicy) -> EngineResult<()> {
+        self.traffic.set(policy)
+    }
+    /// Current recurring queue gate. Uses UTC wall time and explicit IANA zone.
+    pub fn queue_allowed(&self) -> EngineResult<bool> {
+        self.traffic.queue_allowed(Utc::now())
     }
     /// Add a browser job using its request UUID for durable idempotency. Only the
     /// authenticated queue owner may call this after checking existing records.
@@ -309,6 +326,7 @@ impl Engine {
             ids: &self.active,
             id,
             full_progress: &self.full_progress,
+            traffic: &self.traffic,
         };
         let state = self.status(id).await?.state;
         if state == JobState::Cancelled {
@@ -327,6 +345,15 @@ impl Engine {
         }
         if state.is_terminal() || state == JobState::Paused {
             return Ok(());
+        }
+        while !self.queue_allowed()? {
+            if matches!(
+                self.status(id).await?.state,
+                JobState::Paused | JobState::Cancelled
+            ) {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
         if state.is_active() || state == JobState::Failed {
             self.transition(id, JobState::Queued).await?;
@@ -413,11 +440,11 @@ impl Engine {
         }
         Ok(())
     }
-    async fn controlled<T>(
+    async fn controlled<T, E>(
         &self,
         id: JobId,
-        operation: impl Future<Output = Result<T, TransportError>>,
-    ) -> EngineResult<Option<Result<T, TransportError>>> {
+        operation: impl Future<Output = Result<T, E>>,
+    ) -> EngineResult<Option<Result<T, E>>> {
         tokio::pin!(operation);
         loop {
             tokio::select! {
@@ -551,12 +578,16 @@ impl Engine {
             let mut window = Instant::now();
             let mut first_error = None;
             while !pending.is_empty() || !workers.is_empty() {
+                let admission = self.config.fixed_concurrency.unwrap_or(tuning.limit());
+                while !self.queue_allowed()? && self.running(id).await? {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
                 if first_error.is_some() || !self.running(id).await? {
                     pending.clear();
                 }
                 // Split only relinquished tails: no active response can still
                 // own either half. Persist both ownership updates atomically.
-                while workers.len() + pending.len() < tuning.limit()
+                while workers.len() + pending.len() < admission
                     && total_segments < self.config.max_segments_per_job
                 {
                     let Some(index) = pending
@@ -595,19 +626,20 @@ impl Engine {
                     pending.push_back(stolen);
                     total_segments += 1;
                 }
-                while workers.len() < tuning.limit() && !pending.is_empty() {
+                while workers.len() < admission && !pending.is_empty() {
                     if let Some(segment) = pending.pop_front() {
                         workers.push(self.quantum(&job, segment));
                     }
                 }
                 if let Some(result) = workers.next().await {
-                    let (segment, bytes) = match result {
+                    let (segment, bytes, failures, latency_ms) = match result {
                         Ok(result) => result,
                         Err(error) => {
                             first_error.get_or_insert(error);
                             continue;
                         }
                     };
+                    tuning.health(failures, latency_ms);
                     progress += bytes;
                     sampled += bytes;
                     if segment.is_complete() {
@@ -616,7 +648,7 @@ impl Engine {
                     if first_error.is_none() && !segment.is_complete() && self.running(id).await? {
                         pending.push_back(segment);
                     }
-                    if window.elapsed() >= Duration::from_millis(100) {
+                    if window.elapsed() >= Duration::from_millis(250) {
                         ewma.record(sampled, window.elapsed());
                         tuning.observe(ewma.value());
                         sampled = 0;
@@ -649,7 +681,7 @@ impl Engine {
         &self,
         job: &JobRecord,
         mut segment: SegmentRecord,
-    ) -> EngineResult<(SegmentRecord, u64)> {
+    ) -> EngineResult<(SegmentRecord, u64, u32, f64)> {
         let _worker = self.worker(job.id)?;
         let headers = self.session_headers(job)?;
         let before = segment.bytes_downloaded;
@@ -660,8 +692,19 @@ impl Engine {
         );
         for attempt in 0..=self.config.max_retries {
             if !self.running(job.id).await? {
-                return Ok((segment, 0));
+                return Ok((segment, 0, 0, 0.0));
             }
+            let Some(permit) = self
+                .controlled(
+                    job.id,
+                    self.fair
+                        .acquire(job.id, job.url.origin().ascii_serialization()),
+                )
+                .await?
+            else {
+                return Ok((segment, 0, 0, 0.0));
+            };
+            let permit = permit?;
             let response_started = Instant::now();
             let Some(response) = self
                 .controlled(
@@ -676,8 +719,9 @@ impl Engine {
                 .await?
             else {
                 let delta = segment.bytes_downloaded - before;
-                return Ok((segment, delta));
+                return Ok((segment, delta, attempt, 0.0));
             };
+            let latency_ms = response_started.elapsed().as_secs_f64() * 1000.0;
             let result = match response {
                 Ok(response) => {
                     self.response_received(job.id, response.status, response_started);
@@ -693,6 +737,7 @@ impl Engine {
                     source: Box::new(source),
                 }),
             };
+            drop(permit);
             match result {
                 Ok(()) => {
                     if segment.is_complete() {
@@ -700,7 +745,7 @@ impl Engine {
                         self.store.checkpoint_segment(&segment).await?;
                     }
                     let delta = segment.bytes_downloaded - before;
-                    return Ok((segment, delta));
+                    return Ok((segment, delta, attempt, latency_ms));
                 }
                 Err(EngineError::Transport { source, .. })
                     if retryable(&source) && attempt < self.config.max_retries =>
@@ -748,7 +793,22 @@ impl Engine {
             }
             let mut incoming = chunk.as_ref();
             while !incoming.is_empty() {
-                let take = incoming.len().min(buffer_limit - pending.len());
+                let wanted = incoming.len().min(buffer_limit - pending.len()).min(16384);
+                let take = loop {
+                    let granted = self.traffic.take(
+                        job.id,
+                        wanted,
+                        tokio::time::Instant::now(),
+                        Utc::now(),
+                    )?;
+                    if granted > 0 {
+                        break granted;
+                    }
+                    if !self.running(job.id).await? {
+                        return Ok(());
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                };
                 pending.extend_from_slice(&incoming[..take]);
                 incoming = &incoming[take..];
                 if pending.len() == buffer_limit {

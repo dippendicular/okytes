@@ -8,8 +8,9 @@ use hyper::{body::Frame, server::conn::http1, service::service_fn, Method, Reque
 use hyper_util::rt::TokioIo;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     convert::Infallible,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
@@ -28,6 +29,16 @@ pub struct ServerConfig {
     pub seed: u64,
     /// Delay per body frame for slow-transfer/control tests.
     pub frame_delay: Duration,
+    /// Delay before each response's headers (including probes).
+    pub latency: Duration,
+    /// Per-client-IP payload cap. Null is unlimited; pacing has no burst.
+    pub bandwidth_bps: Option<u64>,
+    /// Independent payload cap for each response body.
+    pub connection_bps: Option<u64>,
+    /// Reject bodies above this per-client-IP concurrency with 429 and Retry-After: 1.
+    pub max_active: Option<usize>,
+    /// Reset every Nth body halfway through; zero disables injection.
+    pub disconnect_every: usize,
 }
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -35,6 +46,11 @@ impl Default for ServerConfig {
             file_size: 1024 * 1024,
             seed: 42,
             frame_delay: Duration::ZERO,
+            latency: Duration::ZERO,
+            bandwidth_bps: None,
+            connection_bps: None,
+            max_active: None,
+            disconnect_every: 0,
         }
     }
 }
@@ -58,11 +74,21 @@ struct State {
     throttles: AtomicUsize,
     active: AtomicUsize,
     peak: AtomicUsize,
+    pacing: tokio::sync::Mutex<HashMap<IpAddr, tokio::time::Instant>>,
+    clients: Mutex<HashMap<IpAddr, usize>>,
 }
-struct Active(Arc<State>);
+struct Active(Arc<State>, IpAddr);
 impl Drop for Active {
     fn drop(&mut self) {
         self.0.active.fetch_sub(1, Ordering::SeqCst);
+        if let Ok(mut clients) = self.0.clients.lock() {
+            if let Some(count) = clients.get_mut(&self.1) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    clients.remove(&self.1);
+                }
+            }
+        }
     }
 }
 
@@ -100,6 +126,8 @@ impl TestServer {
             throttles: AtomicUsize::new(0),
             active: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
+            pacing: tokio::sync::Mutex::new(HashMap::new()),
+            clients: Mutex::new(HashMap::new()),
         });
         let (shutdown, mut stop) = oneshot::channel();
         let shared = state.clone();
@@ -110,9 +138,11 @@ impl TestServer {
                     _=&mut stop=>break,
                     Some(_)=connections.join_next(),if !connections.is_empty()=>{},
                     connection=listener.accept()=>{
-                        let Ok((socket,_))=connection else {break};let state=shared.clone();
+                        let Ok((socket,peer))=connection else {break};
+                        if connections.len()>=512 {drop(socket);continue;}
+                        let state=shared.clone();
                         connections.spawn(async move {
-                            let service=service_fn(move |req|handle_request(req,state.clone()));
+                            let service=service_fn(move |req|handle_request(req,state.clone(),peer.ip()));
                             let _=http1::Builder::new().serve_connection(TokioIo::new(socket),service).await;
                         });
                     }
@@ -199,7 +229,11 @@ fn response(status: u16, headers: Vec<(&str, String)>, body: Body) -> Response<B
 async fn handle_request(
     req: Request<hyper::body::Incoming>,
     state: Arc<State>,
+    client: IpAddr,
 ) -> Result<Response<Body>, Infallible> {
+    if !state.config.latency.is_zero() {
+        tokio::time::sleep(state.config.latency).await;
+    }
     let path = req.uri().path().to_owned();
     let range = req
         .headers()
@@ -346,8 +380,21 @@ async fn handle_request(
     if req.method() == Method::HEAD {
         return Ok(response(status, headers, empty()));
     }
+    {
+        let Ok(mut clients) = state.clients.lock() else {
+            return Ok(response(503, vec![], empty()));
+        };
+        let count = clients.entry(client).or_default();
+        if state.config.max_active.is_some_and(|cap| *count >= cap) {
+            return Ok(response(429, vec![("retry-after", "1".into())], empty()));
+        }
+        *count += 1;
+    }
+    let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
     let get = state.gets.fetch_add(1, Ordering::SeqCst);
-    let disconnect = path == "/mid-disconnect" && get == 0;
+    let disconnect = (path == "/mid-disconnect" && get == 0)
+        || (state.config.disconnect_every > 0
+            && (get + 1).is_multiple_of(state.config.disconnect_every));
     let corrupt = path == "/corrupted";
     let delay = if path == "/accelerating" {
         if get < 2 {
@@ -360,38 +407,57 @@ async fn handle_request(
     } else {
         state.config.frame_delay
     };
-    let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
     state.peak.fetch_max(active, Ordering::SeqCst);
-    let guard = Active(state.clone());
+    let guard = Active(state.clone(), client);
+    let pacing = state.clone();
     let seed = state.config.seed + version - 1;
     let midpoint = start + (end - start) / 2;
     let body = stream::unfold(
         (start, Some(guard), false),
-        move |(offset, guard, failed)| async move {
-            if offset >= end || failed {
-                return None;
+        move |(offset, guard, failed)| {
+            let pacing = pacing.clone();
+            async move {
+                if offset >= end || failed {
+                    return None;
+                }
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                if disconnect && offset >= midpoint {
+                    return Some((
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionReset,
+                            "injected disconnect",
+                        )),
+                        (offset, guard, true),
+                    ));
+                }
+                let len = (end - offset).min(65536);
+                if let Some(rate) = pacing.config.connection_bps {
+                    tokio::time::sleep(Duration::from_secs_f64(len as f64 / rate.max(1) as f64))
+                        .await;
+                }
+                if let Some(rate) = pacing.config.bandwidth_bps {
+                    let deadline = {
+                        let mut clocks = pacing.pacing.lock().await;
+                        let now = tokio::time::Instant::now();
+                        clocks.retain(|_, deadline| *deadline > now);
+                        let clock = clocks.entry(client).or_insert(now);
+                        *clock = (*clock).max(now)
+                            + Duration::from_secs_f64(len as f64 / rate.max(1) as f64);
+                        *clock
+                    };
+                    tokio::time::sleep_until(deadline).await;
+                }
+                let mut bytes = content(offset, len, seed);
+                if corrupt && !bytes.is_empty() {
+                    bytes[0] ^= 0xff;
+                }
+                Some((
+                    Ok(Frame::data(Bytes::from(bytes))),
+                    (offset + len, guard, false),
+                ))
             }
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
-            }
-            if disconnect && offset >= midpoint {
-                return Some((
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::ConnectionReset,
-                        "injected disconnect",
-                    )),
-                    (offset, guard, true),
-                ));
-            }
-            let len = (end - offset).min(65536);
-            let mut bytes = content(offset, len, seed);
-            if corrupt && !bytes.is_empty() {
-                bytes[0] ^= 0xff;
-            }
-            Some((
-                Ok(Frame::data(Bytes::from(bytes))),
-                (offset + len, guard, false),
-            ))
         },
     );
     Ok(response(
@@ -422,5 +488,39 @@ mod tests {
         let server = TestServer::start(ServerConfig::default()).await.unwrap();
         assert_eq!(server.content_hash.len(), 64);
         server.shutdown().await;
+    }
+    #[tokio::test]
+    async fn connection_penalty_is_per_ip_not_shared_across_clients() {
+        let server = TestServer::start(ServerConfig {
+            file_size: 256 * 1024,
+            max_active: Some(1),
+            frame_delay: Duration::from_millis(100),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let first = reqwest::Client::builder()
+            .local_address(Some("127.0.0.1".parse::<IpAddr>().unwrap()))
+            .build()
+            .unwrap();
+        let other = reqwest::Client::builder()
+            .local_address(Some("127.0.0.2".parse::<IpAddr>().unwrap()))
+            .build()
+            .unwrap();
+        let held = first.get(server.url("/normal")).send().await.unwrap();
+        assert_eq!(held.status(), 200);
+        assert_eq!(
+            first
+                .get(server.url("/normal"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            429
+        );
+        let separate = other.get(server.url("/normal")).send().await.unwrap();
+        assert_eq!(separate.status(), 200);
+        assert_eq!(held.bytes().await.unwrap().len(), 256 * 1024);
+        assert_eq!(separate.bytes().await.unwrap().len(), 256 * 1024);
     }
 }

@@ -26,6 +26,11 @@ pub struct HttpTransport {
     client: Client,
     origins: Mutex<HashMap<String, Weak<Semaphore>>>,
     cap: usize,
+    global: Arc<Semaphore>,
+}
+struct ConnectionPermit {
+    _origin: OwnedSemaphorePermit,
+    _global: OwnedSemaphorePermit,
 }
 
 fn request_error(url: &Url, error: impl std::fmt::Display) -> TransportError {
@@ -52,6 +57,7 @@ impl HttpTransport {
             client,
             origins: Mutex::new(HashMap::new()),
             cap: config.max_connections_per_origin.max(1),
+            global: Arc::new(Semaphore::new(config.max_connections_total)),
         })
     }
 
@@ -62,7 +68,7 @@ impl HttpTransport {
         headers: &[(String, String)],
         range: Option<(u64, u64)>,
         identity: Option<&RemoteIdentity>,
-    ) -> Result<(Response, OwnedSemaphorePermit), TransportError> {
+    ) -> Result<(Response, ConnectionPermit), TransportError> {
         let mut target = url.clone();
         for _ in 0..=10 {
             if !matches!(target.scheme(), "http" | "https")
@@ -85,10 +91,20 @@ impl HttpTransport {
                 origins.insert(origin, Arc::downgrade(&semaphore));
                 semaphore
             };
-            let permit = semaphore
+            let global = self
+                .global
+                .clone()
                 .acquire_owned()
                 .await
                 .map_err(|e| request_error(&target, e))?;
+            let origin_permit = semaphore
+                .acquire_owned()
+                .await
+                .map_err(|e| request_error(&target, e))?;
+            let permit = ConnectionPermit {
+                _origin: origin_permit,
+                _global: global,
+            };
             let mut map = HeaderMap::new();
             for (name, value) in headers {
                 let name = HeaderName::from_bytes(name.as_bytes())

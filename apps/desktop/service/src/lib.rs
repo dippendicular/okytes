@@ -69,6 +69,7 @@ impl Session {
         config.database_path = self.database_path.clone();
         config.max_concurrent_jobs = queue.settings.concurrency as usize;
         config.default_output_dir = PathBuf::from(&queue.settings.destination);
+        config.traffic = queue.settings.traffic.clone();
         Ok(config)
     }
     /// Validate configuration without allowing it to redirect this profile's DB.
@@ -81,6 +82,7 @@ impl Session {
         let mut settings = queue.settings.clone();
         settings.concurrency = config.max_concurrent_jobs as u32;
         settings.destination = config.default_output_dir.to_string_lossy().into_owned();
+        settings.traffic = config.traffic.clone();
         validate_settings(&settings)?;
         std::fs::create_dir_all(&config.default_output_dir)
             .map_err(|_| invalid("cannot create destination"))?;
@@ -97,6 +99,7 @@ impl Session {
                 ),
             ])
             .await?;
+        self.engine.set_traffic(settings.traffic.clone())?;
         queue.settings = settings;
         Ok(())
     }
@@ -171,9 +174,10 @@ impl Session {
     pub async fn open(database: &Path, destination: &Path) -> EngineResult<Arc<Self>> {
         let store = Arc::new(SqliteStore::open(database)?);
         let lease = SqliteStore::acquire_engine(database)?;
-        let settings = match store.preference("desktop-v1").await? {
+        let mut settings = match store.preference("desktop-v1").await? {
             Some(value) => serde_json::from_str(&value).map_err(|e| invalid(e.to_string()))?,
             None => Settings {
+                traffic: store.config().await?.traffic,
                 version: 1,
                 destination: destination.to_string_lossy().into(),
                 concurrency: 4,
@@ -183,9 +187,13 @@ impl Session {
         };
         validate_settings(&settings)?;
         let mut config = store.config().await?;
+        // CLI profile edits and desktop/API changes share one authoritative policy.
+        settings.traffic = config.traffic.clone();
+        validate_settings(&settings)?;
         config.database_path = database.into();
         // Desktop admission is independently adjustable up to 32; transport caps remain global.
         config.max_concurrent_jobs = 32;
+        config.traffic = settings.traffic.clone();
         let transport = Arc::new(HttpTransport::new(&config).map_err(|e| invalid(e.to_string()))?);
         let engine = Arc::new(Engine::new(
             config,
@@ -347,7 +355,7 @@ impl okytes_browser_bridge::Handler for Session {
 
 async fn admit(session: &Arc<Session>) -> EngineResult<()> {
     let mut queue = session.queue.lock().await;
-    if queue.stopping {
+    if queue.stopping || !session.engine.queue_allowed()? {
         return Ok(());
     }
     queue.tasks.retain(|_, task| !task.is_finished());
@@ -379,6 +387,7 @@ async fn admit(session: &Arc<Session>) -> EngineResult<()> {
 }
 
 fn validate_settings(settings: &Settings) -> EngineResult<()> {
+    settings.traffic.validate()?;
     if settings.version != 1
         || !(1..=32).contains(&settings.concurrency)
         || !["light", "dark", "system"].contains(&settings.theme.as_str())
@@ -655,12 +664,21 @@ impl DesktopService for Session {
                 .await
                 .map_err(|e| invalid(format!("cannot create destination: {e}")))?;
             let mut queue = self.queue.lock().await;
+            let mut config = self.store.config().await?;
+            config.traffic = settings.traffic.clone();
             self.store
-                .set_preference(
-                    "desktop-v1",
-                    &serde_json::to_string(&settings).map_err(|e| invalid(e.to_string()))?,
-                )
+                .set_preferences(vec![
+                    (
+                        "desktop-v1".into(),
+                        serde_json::to_string(&settings).map_err(|e| invalid(e.to_string()))?,
+                    ),
+                    (
+                        "engine".into(),
+                        serde_json::to_string(&config).map_err(|e| invalid(e.to_string()))?,
+                    ),
+                ])
                 .await?;
+            self.engine.set_traffic(settings.traffic.clone())?;
             queue.settings = settings;
             Ok(())
         })

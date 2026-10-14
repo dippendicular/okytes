@@ -1,0 +1,110 @@
+[
+  {
+    "scenario": "single-large",
+    "mode": "fixed",
+    "runs": 3,
+    "mean_bps": 3718816.7979200874,
+    "stddev_bps": 96077.33826422186,
+    "coefficient_of_variation": 0.025835458826032345,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "single-large",
+    "mode": "adaptive",
+    "runs": 3,
+    "mean_bps": 2604520.047721909,
+    "stddev_bps": 147116.1149516555,
+    "coefficient_of_variation": 0.05648492323195335,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "many-small",
+    "mode": "fixed",
+    "runs": 3,
+    "mean_bps": 1679796.8232140082,
+    "stddev_bps": 497348.2672586518,
+    "coefficient_of_variation": 0.29607644233250763,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "many-small",
+    "mode": "adaptive",
+    "runs": 3,
+    "mean_bps": 1316098.323405992,
+    "stddev_bps": 175379.56961608096,
+    "coefficient_of_variation": 0.13325719400827746,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "per-connection-cap",
+    "mode": "fixed",
+    "runs": 3,
+    "mean_bps": 3110336.693311354,
+    "stddev_bps": 42726.47394510741,
+    "coefficient_of_variation": 0.01373692887878951,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "per-connection-cap",
+    "mode": "adaptive",
+    "runs": 3,
+    "mean_bps": 869788.1864143679,
+    "stddev_bps": 7398.546250993122,
+    "coefficient_of_variation": 0.008506147090239334,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "high-latency",
+    "mode": "fixed",
+    "runs": 3,
+    "mean_bps": 3366730.5167680406,
+    "stddev_bps": 98666.07072808905,
+    "coefficient_of_variation": 0.02930619787852979,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "high-latency",
+    "mode": "adaptive",
+    "runs": 3,
+    "mean_bps": 1490538.4101290181,
+    "stddev_bps": 73003.48223286348,
+    "coefficient_of_variation": 0.04897792753059241,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "flaky-resets",
+    "mode": "fixed",
+    "runs": 3,
+    "mean_bps": 3300079.634716252,
+    "stddev_bps": 142845.2671127498,
+    "coefficient_of_variation": 0.04328540002793962,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "flaky-resets",
+    "mode": "adaptive",
+    "runs": 3,
+    "mean_bps": 2174753.0378642683,
+    "stddev_bps": 137765.03926934543,
+    "coefficient_of_variation": 0.06334744077637365,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "connection-penalty",
+    "mode": "fixed",
+    "runs": 3,
+    "mean_bps": 2007567.6320026119,
+    "stddev_bps": 158695.38640245883,
+    "coefficient_of_variation": 0.07904858788949251,
+    "completion_rate": 1.0
+  },
+  {
+    "scenario": "connection-penalty",
+    "mode": "adaptive",
+    "runs": 3,
+    "mean_bps": 1545443.4857224645,
+    "stddev_bps": 31990.556946938363,
+    "coefficient_of_variation": 0.020699920276918703,
+    "completion_rate": 1.0
+  }
+]

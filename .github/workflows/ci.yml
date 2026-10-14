@@ -23,6 +23,8 @@ jobs:
       - name: Check generated bindings
         run: |
           cargo test -p okytes-core --lib --locked desktop::export_bindings
+          cargo test -p okytes-core --lib --locked traffic::export_bindings
+          node apps/desktop/scripts/normalize-bindings.mjs
           git diff --exit-code -- crates/core/bindings
       - name: Frontend checks
         working-directory: apps/desktop

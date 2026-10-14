@@ -383,11 +383,17 @@ async fn admin_configuration_updates_queue_preferences_and_rejects_database_redi
     config.max_concurrent_jobs = 2;
     config.default_output_dir = f.root.path().join("new-downloads");
     config.database_path = f.root.path().join("wrong.db");
+    config.traffic.global_bps = Some(65536);
+    config.traffic.timezone = "Asia/Dhaka".into();
     client
         .request::<()>(Method::PUT, "v1/config", Some(&config))
         .await
         .unwrap();
     assert_eq!(client.settings().await.unwrap().concurrency, 2);
+    assert_eq!(
+        client.settings().await.unwrap().traffic.global_bps,
+        Some(65536)
+    );
     assert_eq!(
         client.settings().await.unwrap().destination,
         config.default_output_dir.to_string_lossy()
@@ -397,5 +403,6 @@ async fn admin_configuration_updates_queue_preferences_and_rejects_database_redi
         .await
         .unwrap();
     assert_eq!(saved.database_path, f.root.path().join("okytes.db"));
+    assert_eq!(saved.traffic.timezone, "Asia/Dhaka");
     assert!(!f.root.path().join("wrong.db").exists());
 }

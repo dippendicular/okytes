@@ -177,12 +177,17 @@ pub fn retry_delay(
 /// Thread-safe wrapper around the connection tracker.
 pub type SharedConnectionTracker = Arc<Mutex<ConnectionTracker>>;
 
-/// Conservative throughput hill-climber. A second improving EWMA window is
-/// required before adding a worker; flat or declining windows remove a worker.
+/// Throughput hill-climber with bounded exploration, latency checks, health
+/// backoff and a frozen plateau to avoid repeated no-gain probes.
 pub struct AdaptiveConcurrency {
     limit: usize,
     max: usize,
-    previous: Option<f64>,
+    baseline: Option<f64>,
+    windows: u32,
+    probe: Option<(usize, f64, f64, u32)>,
+    frozen: bool,
+    latency_ms: Option<f64>,
+    probe_latency_ms: Option<f64>,
 }
 impl AdaptiveConcurrency {
     /// Start with one worker, bounded by the configured cap.
@@ -190,23 +195,98 @@ impl AdaptiveConcurrency {
         Self {
             limit: 1,
             max: max.max(1),
-            previous: None,
+            baseline: None,
+            windows: 0,
+            probe: None,
+            frozen: false,
+            latency_ms: None,
+            probe_latency_ms: None,
         }
     }
     /// Current worker admission limit.
     pub fn limit(&self) -> usize {
         self.limit
     }
-    /// Observe a completed effective-throughput window.
-    pub fn observe(&mut self, throughput: f64) {
-        if let Some(previous) = self.previous {
-            if throughput > previous * 1.05 {
-                self.limit = (self.limit + 1).min(self.max);
-            } else {
-                self.limit = self.limit.saturating_sub(1).max(1);
-            }
+    /// Connection resets and throttling cut admission immediately. Header
+    /// latency is retained as a saturation signal for candidate evaluation.
+    pub fn health(&mut self, failures: u32, latency_ms: f64) {
+        if failures > 0 {
+            self.limit = (self.limit / 2).max(1);
+            self.probe = None;
+            self.baseline = None;
+            self.windows = 0;
+            self.frozen = true;
         }
-        self.previous = Some(throughput);
+        if latency_ms.is_finite() && latency_ms > 0.0 {
+            self.latency_ms = Some(
+                self.latency_ms
+                    .map_or(latency_ms, |old| old * 0.7 + latency_ms * 0.3),
+            );
+        }
+    }
+    /// Evaluate a bounded probe after two stable EWMA windows. More workers
+    /// remain only after a >=12% aggregate gain; a failed probe freezes further
+    /// exploration until conditions materially change. One settling window and
+    /// two measured windows prevent single completion bursts driving changes.
+    pub fn observe(&mut self, throughput: f64) {
+        if !throughput.is_finite() || throughput <= 0.0 {
+            return;
+        }
+        if let Some((old, baseline, sum, samples)) = self.probe {
+            if samples == 0 {
+                self.probe = Some((old, baseline, 0.0, 1));
+                return;
+            }
+            let sum = sum + throughput;
+            if samples < 2 {
+                self.probe = Some((old, baseline, sum, samples + 1));
+                return;
+            }
+            let candidate = sum / 2.0;
+            let latency_penalty = self
+                .probe_latency_ms
+                .zip(self.latency_ms)
+                .is_some_and(|(before, after)| after > before * 1.5 && candidate < baseline * 1.25);
+            if candidate >= baseline * 1.12 && !latency_penalty {
+                self.baseline = Some(candidate);
+                self.frozen = false;
+            } else {
+                self.limit = old;
+                self.baseline = Some(baseline);
+                self.frozen = true;
+            }
+            self.probe = None;
+            self.windows = 0;
+            return;
+        }
+        let Some(baseline) = self.baseline else {
+            self.baseline = Some(throughput);
+            return;
+        };
+        if self.frozen {
+            // No repeated probes on a flat link: noise within 25% stays frozen.
+            if (throughput - baseline).abs() > baseline * 0.25 {
+                self.frozen = false;
+                self.baseline = Some(throughput);
+                self.windows = 0;
+            }
+            return;
+        }
+        if throughput < baseline * 0.75 && self.limit > 1 {
+            self.limit -= 1;
+            self.baseline = Some(throughput);
+            self.windows = 0;
+            return;
+        }
+        self.baseline = Some(baseline * 0.7 + throughput * 0.3);
+        self.windows += 1;
+        if self.windows >= 2 && self.limit < self.max {
+            let baseline = self.baseline.unwrap_or(throughput);
+            self.probe_latency_ms = self.latency_ms;
+            self.probe = Some((self.limit, baseline, 0.0, 0));
+            self.limit += 1;
+            self.windows = 0;
+        }
     }
 }
 
@@ -214,18 +294,30 @@ impl AdaptiveConcurrency {
 mod tests {
     use super::*;
     #[test]
-    fn adaptive_admission_requires_improvement_and_backs_off() {
+    fn adaptive_probes_gain_then_health_backs_off() {
         let mut scheduler = AdaptiveConcurrency::new(3);
-        scheduler.observe(100.0);
-        assert_eq!(scheduler.limit(), 1);
-        scheduler.observe(120.0);
+        for _ in 0..3 {
+            scheduler.observe(100.0);
+        }
         assert_eq!(scheduler.limit(), 2);
-        scheduler.observe(140.0);
+        for _ in 0..3 {
+            scheduler.observe(200.0);
+        }
+        for _ in 0..2 {
+            scheduler.observe(200.0);
+        }
         assert_eq!(scheduler.limit(), 3);
-        scheduler.observe(140.0);
-        assert_eq!(scheduler.limit(), 2);
-        scheduler.observe(90.0);
+        scheduler.health(1, 100.0);
         assert_eq!(scheduler.limit(), 1);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn saturated_link_settles_without_oscillation(noise in proptest::collection::vec(-4i32..=4, 100..300), max in 2usize..128) {
+            let mut scheduler=AdaptiveConcurrency::new(max);let mut changes=0;let mut previous=1;
+            for sample in noise {scheduler.observe(100.0+sample as f64);if scheduler.limit()!=previous {changes+=1;previous=scheduler.limit();}proptest::prop_assert!(scheduler.limit()>=1 && scheduler.limit()<=max);}
+            proptest::prop_assert!(changes<=2);proptest::prop_assert_eq!(scheduler.limit(),1);
+        }
     }
 
     #[test]

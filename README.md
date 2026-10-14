@@ -5,7 +5,7 @@
 
 **A download manager built to finish what it starts.**
 
-Fast when your connection allows it. Reliable when things go wrong. Free, open source, and fully local.
+Recoverable downloads, verified files, and control over your bandwidth. Free, open source, and fully local.
 
 ![Windows · Linux · macOS](https://img.shields.io/badge/Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey)
 ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-black)
@@ -22,7 +22,7 @@ Fast when your connection allows it. Reliable when things go wrong. Free, open s
 
 A fast download means little if the file ends up corrupted or you have to start over after a crash.
 
-Okytes is built to make downloads fast, recoverable, and trustworthy. It uses adaptive parallel transfers when they help, saves progress safely, and checks files before marking them complete.
+Okytes saves progress safely and checks files before marking them complete. Its parallel-transfer scheduler measures the effect of extra workers and keeps more only when the measured gain justifies them.
 
 | What matters | How Okytes handles it |
 |---|---|
@@ -163,6 +163,12 @@ Eligible files are split into non-overlapping byte ranges. Workers download thos
 When a worker slows down, the engine can redistribute unfinished work without overlapping writes.
 
 More connections are useful only when they actually improve throughput.
+
+The [benchmark harness](benchmarks/README.md) compares adaptive transfers with a fixed-concurrency control, with raw results and variance. Performance depends on the workload; calibration and server throttling can make fewer workers preferable.
+
+### Bandwidth and schedules
+
+Set a total bandwidth limit, a separate limit for each download, or recurring windows in your chosen timezone. Windows can lower bandwidth or hold the queue until a quieter time. Preferences survive restarts, and a schedule opening preserves downloads you paused yourself. See [bandwidth and schedule settings](docs/bandwidth-and-schedules.md) for desktop, CLI and API usage.
 
 ### Crash-safe checkpoints
 

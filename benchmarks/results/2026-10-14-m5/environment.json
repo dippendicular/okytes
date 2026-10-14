@@ -1,0 +1,46 @@
+{
+  "arch": "x86_64",
+  "binary_sha256": "ca919e9ccd8eab57e8ef9c16dbd815d75ccdea7f6ced560cec5c59991bec9875",
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "cpu": "Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz",
+  "disks": [
+    {
+      "kind": "SSD",
+      "mount": "C:\\",
+      "total_bytes": 255141605376
+    },
+    {
+      "kind": "Unknown(-1)",
+      "mount": "H:\\",
+      "total_bytes": 214747312128
+    },
+    {
+      "kind": "Unknown(-1)",
+      "mount": "D:\\",
+      "total_bytes": 107374178304
+    },
+    {
+      "kind": "Unknown(-1)",
+      "mount": "E:\\",
+      "total_bytes": 463104634880
+    },
+    {
+      "kind": "Unknown(-1)",
+      "mount": "F:\\",
+      "total_bytes": 214746263552
+    }
+  ],
+  "fixed_workers": 4,
+  "git_commit": "318c2011127d3b0fede2a38155daeb351256db53",
+  "git_dirty": "M .github/workflows/ci.yml\n M Cargo.lock\n M Cargo.toml\n M README.md\n M apps/cli/src/main.rs\n M apps/cli/tests/daemon.rs\n M apps/daemon/api/openapi-v1.json\n M apps/daemon/tests/api.rs\n M apps/desktop/service/src/lib.rs\n M apps/desktop/src/App.test.tsx\n M apps/desktop/src/App.tsx\n M crates/core/Cargo.toml\n M crates/core/bindings/Settings.ts\n M crates/core/src/desktop.rs\n M crates/core/src/engine.rs\n M crates/core/src/lib.rs\n M crates/core/src/scheduler.rs\n M crates/core/src/types.rs\n M crates/test-support/Cargo.toml\n M crates/test-support/src/server.rs\n M crates/transport-http/src/lib.rs\n M packages/sdk-typescript/src/schema.ts\n?? apps/desktop/scripts/normalize-bindings.mjs\n?? apps/desktop/service/tests/traffic.rs\n?? apps/desktop/src/TrafficSettings.test.tsx\n?? apps/desktop/src/TrafficSettings.tsx\n?? benchmarks/\n?? crates/core/bindings/JobLimit.ts\n?? crates/core/bindings/ScheduleWindow.ts\n?? crates/core/bindings/TrafficPolicy.ts\n?? crates/core/src/fairness.rs\n?? crates/core/src/traffic.rs\n?? docs/",
+  "kernel": "26200",
+  "logical_cpus": 8,
+  "memory_bytes": 17077800960,
+  "origin_and_worker": "separate processes; loopback origin runs in driver",
+  "os": "Windows 11 Pro",
+  "process_sampling_ms": 20,
+  "profile": "release",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-pc-windows-msvc\nrelease: 1.95.0\nLLVM version: 22.1.2",
+  "timestamp_utc": "2026-10-14T10:23:42.635998600Z",
+  "worker_temp_root": "C:\\Users\\dipch\\AppData\\Local\\Temp\\"
+}

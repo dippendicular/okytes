@@ -40,6 +40,14 @@ beforeEach(() => {
     concurrency: 4,
     theme: "system",
     notifications: true,
+    traffic: {
+      global_bps: null,
+      per_job_bps: null,
+      job_limits: [],
+      timezone: "UTC",
+      queue_allowed: true,
+      windows: [],
+    },
   });
   vi.mocked(api.add).mockResolvedValue(["new-id"]);
 });

@@ -1,0 +1,1763 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index f4c7a89..0bccd57 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -23,6 +23,8 @@ jobs:
+       - name: Check generated bindings
+         run: |
+           cargo test -p okytes-core --lib --locked desktop::export_bindings
++          cargo test -p okytes-core --lib --locked traffic::export_bindings
++          node apps/desktop/scripts/normalize-bindings.mjs
+           git diff --exit-code -- crates/core/bindings
+       - name: Frontend checks
+         working-directory: apps/desktop
+diff --git a/Cargo.lock b/Cargo.lock
+index 201ac25..f2d8e54 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -727,6 +727,16 @@ dependencies = [
+  "windows-link",
+ ]
+ 
++[[package]]
++name = "chrono-tz"
++version = "0.10.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
++dependencies = [
++ "chrono",
++ "phf 0.12.1",
++]
++
+ [[package]]
+ name = "clap"
+ version = "4.6.7"
+@@ -909,7 +919,7 @@ dependencies = [
+  "cssparser-macros",
+  "dtoa-short",
+  "itoa",
+- "phf",
++ "phf 0.13.1",
+  "smallvec",
+ ]
+ 
+@@ -2627,6 +2637,15 @@ dependencies = [
+  "zbus",
+ ]
+ 
++[[package]]
++name = "ntapi"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
++dependencies = [
++ "winapi",
++]
++
+ [[package]]
+ name = "nu-ansi-term"
+ version = "0.50.3"
+@@ -2821,6 +2840,16 @@ dependencies = [
+  "objc2-core-foundation",
+ ]
+ 
++[[package]]
++name = "objc2-io-kit"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
++dependencies = [
++ "libc",
++ "objc2-core-foundation",
++]
++
+ [[package]]
+ name = "objc2-io-surface"
+ version = "0.3.2"
+@@ -2832,6 +2861,17 @@ dependencies = [
+  "objc2-core-foundation",
+ ]
+ 
++[[package]]
++name = "objc2-open-directory"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bb82bed227edf5201dfedf072bba4015a33d3d4a98519837295a90f0a23f676d"
++dependencies = [
++ "objc2",
++ "objc2-core-foundation",
++ "objc2-foundation",
++]
++
+ [[package]]
+ name = "objc2-quartz-core"
+ version = "0.3.2"
+@@ -2898,6 +2938,26 @@ dependencies = [
+  "asn1-rs",
+ ]
+ 
++[[package]]
++name = "okytes-bench"
++version = "0.1.0"
++dependencies = [
++ "anyhow",
++ "chrono",
++ "clap",
++ "futures",
++ "okytes-core",
++ "okytes-persistence",
++ "okytes-test-support",
++ "okytes-transport-http",
++ "serde",
++ "serde_json",
++ "sha2",
++ "sysinfo",
++ "tempfile",
++ "tokio",
++]
++
+ [[package]]
+ name = "okytes-browser-bridge"
+ version = "0.1.0"
+@@ -2950,6 +3010,7 @@ version = "0.1.0"
+ dependencies = [
+  "bytes",
+  "chrono",
++ "chrono-tz",
+  "futures",
+  "proptest",
+  "rand 0.8.8",
+@@ -3099,6 +3160,7 @@ dependencies = [
+  "hyper",
+  "hyper-util",
+  "rand 0.8.8",
++ "reqwest 0.12.28",
+  "serde",
+  "serde_json",
+  "sha2",
+@@ -3222,6 +3284,15 @@ version = "2.3.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+ 
++[[package]]
++name = "phf"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
++dependencies = [
++ "phf_shared 0.12.1",
++]
++
+ [[package]]
+ name = "phf"
+ version = "0.13.1"
+@@ -3229,7 +3300,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
+ dependencies = [
+  "phf_macros",
+- "phf_shared",
++ "phf_shared 0.13.1",
+  "serde",
+ ]
+ 
+@@ -3240,7 +3311,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "49aa7f9d80421bca176ca8dbfebe668cc7a2684708594ec9f3c0db0805d5d6e1"
+ dependencies = [
+  "phf_generator",
+- "phf_shared",
++ "phf_shared 0.13.1",
+ ]
+ 
+ [[package]]
+@@ -3250,7 +3321,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "135ace3a761e564ec88c03a77317a7c6b80bb7f7135ef2544dbe054243b89737"
+ dependencies = [
+  "fastrand",
+- "phf_shared",
++ "phf_shared 0.13.1",
+ ]
+ 
+ [[package]]
+@@ -3260,12 +3331,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
+ dependencies = [
+  "phf_generator",
+- "phf_shared",
++ "phf_shared 0.13.1",
+  "proc-macro2",
+  "quote",
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "phf_shared"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
++dependencies = [
++ "siphasher",
++]
++
+ [[package]]
+ name = "phf_shared"
+ version = "0.13.1"
+@@ -4028,7 +4108,7 @@ dependencies = [
+  "derive_more",
+  "log",
+  "new_debug_unreachable",
+- "phf",
++ "phf 0.13.1",
+  "phf_codegen",
+  "precomputed-hash",
+  "rustc-hash",
+@@ -4360,7 +4440,7 @@ checksum = "a18596f8c785a729f2819c0f6a7eae6ebeebdfffbfe4214ae6b087f690e31901"
+ dependencies = [
+  "new_debug_unreachable",
+  "parking_lot",
+- "phf_shared",
++ "phf_shared 0.13.1",
+  "precomputed-hash",
+ ]
+ 
+@@ -4371,7 +4451,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "585635e46db231059f76c5849798146164652513eb9e8ab2685939dd90f29b69"
+ dependencies = [
+  "phf_generator",
+- "phf_shared",
++ "phf_shared 0.13.1",
+  "proc-macro2",
+  "quote",
+ ]
+@@ -4462,6 +4542,21 @@ dependencies = [
+  "syn 3.0.9",
+ ]
+ 
++[[package]]
++name = "sysinfo"
++version = "0.39.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d2071df9448915b71c4fe6d25deaf1c22f12bd234f01540b77312bb8e41361e6"
++dependencies = [
++ "libc",
++ "memchr",
++ "ntapi",
++ "objc2-core-foundation",
++ "objc2-io-kit",
++ "objc2-open-directory",
++ "windows",
++]
++
+ [[package]]
+ name = "system-deps"
+ version = "6.2.2"
+@@ -4750,7 +4845,7 @@ dependencies = [
+  "json-patch",
+  "log",
+  "memchr",
+- "phf",
++ "phf 0.13.1",
+  "plist",
+  "proc-macro2",
+  "quote",
+@@ -5552,7 +5647,7 @@ version = "0.2.6"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "ba8b815c1b593dc0baf78dd0f4fc8fdb2de53198fb1163738093e9a311c33fb3"
+ dependencies = [
+- "phf",
++ "phf 0.13.1",
+  "phf_codegen",
+  "string_cache",
+  "string_cache_codegen",
+diff --git a/Cargo.toml b/Cargo.toml
+index 7305253..2e5fa7c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -12,6 +12,7 @@ members = [
+     "apps/native-host",
+     "crates/daemon-api",
+     "apps/daemon",
++    "benchmarks",
+ ]
+ 
+ [workspace.package]
+diff --git a/README.md b/README.md
+index b8af15c..e1c895d 100644
+--- a/README.md
++++ b/README.md
+@@ -5,7 +5,7 @@
+ 
+ **A download manager built to finish what it starts.**
+ 
+-Fast when your connection allows it. Reliable when things go wrong. Free, open source, and fully local.
++Recoverable downloads, verified files, and control over your bandwidth. Free, open source, and fully local.
+ 
+ ![Windows · Linux · macOS](https://img.shields.io/badge/Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey)
+ ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-black)
+@@ -22,7 +22,7 @@ Fast when your connection allows it. Reliable when things go wrong. Free, open s
+ 
+ A fast download means little if the file ends up corrupted or you have to start over after a crash.
+ 
+-Okytes is built to make downloads fast, recoverable, and trustworthy. It uses adaptive parallel transfers when they help, saves progress safely, and checks files before marking them complete.
++Okytes saves progress safely and checks files before marking them complete. Its parallel-transfer scheduler measures the effect of extra workers and keeps more only when the measured gain justifies them.
+ 
+ | What matters | How Okytes handles it |
+ |---|---|
+@@ -164,6 +164,12 @@ When a worker slows down, the engine can redistribute unfinished work without ov
+ 
+ More connections are useful only when they actually improve throughput.
+ 
++The [benchmark harness](benchmarks/README.md) compares adaptive transfers with a fixed-concurrency control, with raw results and variance. Performance depends on the workload; calibration and server throttling can make fewer workers preferable.
++
++### Bandwidth and schedules
++
++Set a total bandwidth limit, a separate limit for each download, or recurring windows in your chosen timezone. Windows can lower bandwidth or hold the queue until a quieter time. Preferences survive restarts, and a schedule opening preserves downloads you paused yourself. See [bandwidth and schedule settings](docs/bandwidth-and-schedules.md) for desktop, CLI and API usage.
++
+ ### Crash-safe checkpoints
+ 
+ Download progress follows a strict persistence order:
+diff --git a/apps/cli/src/main.rs b/apps/cli/src/main.rs
+index f51bd64..abc21ad 100644
+--- a/apps/cli/src/main.rs
++++ b/apps/cli/src/main.rs
+@@ -74,6 +74,11 @@ enum Command {
+         #[arg(long)]
+         set: Option<PathBuf>,
+     },
++    /// Read or replace persisted bandwidth and recurring schedule policy.
++    Traffic {
++        #[arg(long)]
++        set: Option<PathBuf>,
++    },
+ }
+ 
+ fn validate(c: &EngineConfig) -> Result<()> {
+@@ -189,6 +194,15 @@ async fn execute(args: Args) -> Result<()> {
+             store.save_job(&job).await?;
+             print(job, args.json)?;
+         }
++        Command::Traffic { set } => {
++            let mut config = store.config().await?;
++            if let Some(path) = set {
++                config.traffic = serde_json::from_slice(&std::fs::read(path)?)?;
++                config.validate()?;
++                store.set_config(&config).await?;
++            }
++            print(config.traffic, args.json)?;
++        }
+         Command::Config { set } => {
+             if let Some(path) = set {
+                 let config: EngineConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+@@ -339,6 +353,19 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
+                 .await?;
+             print(remote_record(&client, id).await?, args.json)?;
+         }
++        Command::Traffic { set } => {
++            let mut config: EngineConfig = client
++                .request(Method::GET, "v1/config", None::<&()>)
++                .await?;
++            if let Some(path) = set {
++                config.traffic = serde_json::from_slice(&std::fs::read(path)?)?;
++                config.validate()?;
++                client
++                    .request::<()>(Method::PUT, "v1/config", Some(&config))
++                    .await?;
++            }
++            print(config.traffic, args.json)?;
++        }
+         Command::Config { set } => {
+             if let Some(path) = set {
+                 let config: EngineConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+diff --git a/apps/cli/tests/daemon.rs b/apps/cli/tests/daemon.rs
+index 0e32de2..32c82f5 100644
+--- a/apps/cli/tests/daemon.rs
++++ b/apps/cli/tests/daemon.rs
+@@ -29,6 +29,33 @@ async fn command(fixture: &Fixture, args: &[&str]) -> serde_json::Value {
+     )
+     .unwrap()
+ }
++#[tokio::test]
++async fn traffic_command_round_trips_live_daemon_preferences() {
++    let fixture = Fixture::new().await;
++    let path = fixture.root.path().join("traffic.json");
++    let policy = okytes_core::traffic::TrafficPolicy {
++        global_bps: Some(65536),
++        timezone: "Asia/Dhaka".into(),
++        queue_allowed: false,
++        ..Default::default()
++    };
++    std::fs::write(&path, serde_json::to_vec(&policy).unwrap()).unwrap();
++    let reply = command(&fixture, &["traffic", "--set", path.to_str().unwrap()]).await;
++    assert_eq!(reply["global_bps"], 65536);
++    assert_eq!(reply["queue_allowed"], false);
++    assert_eq!(
++        fixture
++            .api
++            .session
++            .settings()
++            .await
++            .unwrap()
++            .traffic
++            .timezone,
++        "Asia/Dhaka"
++    );
++}
++
+ #[tokio::test]
+ async fn daemon_cli_retains_legacy_json_records_and_integrity_options() {
+     let fixture = Fixture::new().await;
+diff --git a/apps/daemon/api/openapi-v1.json b/apps/daemon/api/openapi-v1.json
+index 2c81f42..00a9ce7 100644
+--- a/apps/daemon/api/openapi-v1.json
++++ b/apps/daemon/api/openapi-v1.json
+@@ -303,6 +303,14 @@
+             "format": "double",
+             "type": "number"
+           },
++          "fixed_concurrency": {
++            "description": "Fixed worker count for reproducible controls; null enables adaptation.",
++            "minimum": 0,
++            "type": [
++              "integer",
++              "null"
++            ]
++          },
+           "max_concurrent_jobs": {
+             "description": "Maximum concurrent downloads.",
+             "minimum": 0,
+@@ -313,6 +321,11 @@
+             "minimum": 0,
+             "type": "integer"
+           },
++          "max_connections_total": {
++            "description": "Aggregate transport connections, including probes and redirected bodies.",
++            "minimum": 0,
++            "type": "integer"
++          },
+           "max_retries": {
+             "description": "Maximum retry attempts per segment.",
+             "format": "int32",
+@@ -354,6 +367,10 @@
+             "minimum": 0,
+             "type": "integer"
+           },
++          "traffic": {
++            "$ref": "#/components/schemas/TrafficPolicy",
++            "description": "Live payload limits and recurring queue/bandwidth windows."
++          },
+           "write_buffer_size": {
+             "description": "Bounded buffer size for write operations in bytes.",
+             "minimum": 0,
+@@ -626,6 +643,29 @@
+         ],
+         "type": "object"
+       },
++      "JobLimit": {
++        "additionalProperties": false,
++        "description": "Per-job payload override. Removing an override restores the default rate.",
++        "properties": {
++          "bps": {
++            "description": "Positive bytes/second, or null for an unlimited job.",
++            "format": "int64",
++            "minimum": 0,
++            "type": [
++              "integer",
++              "null"
++            ]
++          },
++          "id": {
++            "description": "UUID of the job to limit.",
++            "type": "string"
++          }
++        },
++        "required": [
++          "id"
++        ],
++        "type": "object"
++      },
+       "JobRecord": {
+         "description": "Persistent metadata for a download job.",
+         "properties": {
+@@ -897,6 +937,55 @@
+         ],
+         "type": "object"
+       },
++      "ScheduleWindow": {
++        "additionalProperties": false,
++        "description": "Recurring window. Start is inclusive, end exclusive; overnight windows\nbelong to their starting weekday. Overlapping rules use the stricter limit.",
++        "properties": {
++          "days": {
++            "description": "Monday=0 through Sunday=6; at least one distinct day.",
++            "items": {
++              "format": "int32",
++              "minimum": 0,
++              "type": "integer"
++            },
++            "type": "array"
++          },
++          "end_minute": {
++            "description": "Local end minute, 0..1440; must differ from start.",
++            "format": "int32",
++            "minimum": 0,
++            "type": "integer"
++          },
++          "global_bps": {
++            "description": "Optional aggregate cap applied in addition to the base cap.",
++            "format": "int64",
++            "minimum": 0,
++            "type": [
++              "integer",
++              "null"
++            ]
++          },
++          "queue_allowed": {
++            "description": "Null leaves queue behavior unchanged; false closes the queue.",
++            "type": [
++              "boolean",
++              "null"
++            ]
++          },
++          "start_minute": {
++            "description": "Local start minute, 0..1439.",
++            "format": "int32",
++            "minimum": 0,
++            "type": "integer"
++          }
++        },
++        "required": [
++          "days",
++          "start_minute",
++          "end_minute"
++        ],
++        "type": "object"
++      },
+       "Scope": {
+         "description": "Monotonic capability hierarchy; control cannot manage token credentials.",
+         "enum": [
+@@ -958,6 +1047,10 @@
+             "description": "Light, dark or system.",
+             "type": "string"
+           },
++          "traffic": {
++            "$ref": "#/components/schemas/TrafficPolicy",
++            "description": "Shared runtime bandwidth and queue schedule policy."
++          },
+           "version": {
+             "description": "Schema version, currently one.",
+             "format": "int32",
+@@ -1073,6 +1166,59 @@
+         ],
+         "type": "object"
+       },
++      "TrafficPolicy": {
++        "additionalProperties": false,
++        "description": "Persistent payload policy shared by every backend. Null rates are unlimited.",
++        "properties": {
++          "global_bps": {
++            "default": null,
++            "description": "Aggregate bytes/second across all jobs.",
++            "format": "int64",
++            "minimum": 0,
++            "type": [
++              "integer",
++              "null"
++            ]
++          },
++          "job_limits": {
++            "default": [],
++            "description": "Explicit overrides, at most 128 unique job UUIDs.",
++            "items": {
++              "$ref": "#/components/schemas/JobLimit"
++            },
++            "type": "array"
++          },
++          "per_job_bps": {
++            "default": null,
++            "description": "Default bytes/second for each job independently.",
++            "format": "int64",
++            "minimum": 0,
++            "type": [
++              "integer",
++              "null"
++            ]
++          },
++          "queue_allowed": {
++            "default": true,
++            "description": "Whether the queue runs outside matching queue windows.",
++            "type": "boolean"
++          },
++          "timezone": {
++            "default": "UTC",
++            "description": "IANA timezone, independent of the host's local zone.",
++            "type": "string"
++          },
++          "windows": {
++            "default": [],
++            "description": "At most 32 recurring local-time windows.",
++            "items": {
++              "$ref": "#/components/schemas/ScheduleWindow"
++            },
++            "type": "array"
++          }
++        },
++        "type": "object"
++      },
+       "Update": {
+         "description": "Bounded stream notifications. Clients must replace snapshots on Resync.",
+         "oneOf": [
+diff --git a/apps/daemon/tests/api.rs b/apps/daemon/tests/api.rs
+index 115adaf..0bf78a3 100644
+--- a/apps/daemon/tests/api.rs
++++ b/apps/daemon/tests/api.rs
+@@ -383,11 +383,17 @@ async fn admin_configuration_updates_queue_preferences_and_rejects_database_redi
+     config.max_concurrent_jobs = 2;
+     config.default_output_dir = f.root.path().join("new-downloads");
+     config.database_path = f.root.path().join("wrong.db");
++    config.traffic.global_bps = Some(65536);
++    config.traffic.timezone = "Asia/Dhaka".into();
+     client
+         .request::<()>(Method::PUT, "v1/config", Some(&config))
+         .await
+         .unwrap();
+     assert_eq!(client.settings().await.unwrap().concurrency, 2);
++    assert_eq!(
++        client.settings().await.unwrap().traffic.global_bps,
++        Some(65536)
++    );
+     assert_eq!(
+         client.settings().await.unwrap().destination,
+         config.default_output_dir.to_string_lossy()
+@@ -397,5 +403,6 @@ async fn admin_configuration_updates_queue_preferences_and_rejects_database_redi
+         .await
+         .unwrap();
+     assert_eq!(saved.database_path, f.root.path().join("okytes.db"));
++    assert_eq!(saved.traffic.timezone, "Asia/Dhaka");
+     assert!(!f.root.path().join("wrong.db").exists());
+ }
+diff --git a/apps/desktop/service/src/lib.rs b/apps/desktop/service/src/lib.rs
+index e0c58f3..876c764 100644
+--- a/apps/desktop/service/src/lib.rs
++++ b/apps/desktop/service/src/lib.rs
+@@ -69,6 +69,7 @@ impl Session {
+         config.database_path = self.database_path.clone();
+         config.max_concurrent_jobs = queue.settings.concurrency as usize;
+         config.default_output_dir = PathBuf::from(&queue.settings.destination);
++        config.traffic = queue.settings.traffic.clone();
+         Ok(config)
+     }
+     /// Validate configuration without allowing it to redirect this profile's DB.
+@@ -81,6 +82,7 @@ impl Session {
+         let mut settings = queue.settings.clone();
+         settings.concurrency = config.max_concurrent_jobs as u32;
+         settings.destination = config.default_output_dir.to_string_lossy().into_owned();
++        settings.traffic = config.traffic.clone();
+         validate_settings(&settings)?;
+         std::fs::create_dir_all(&config.default_output_dir)
+             .map_err(|_| invalid("cannot create destination"))?;
+@@ -97,6 +99,7 @@ impl Session {
+                 ),
+             ])
+             .await?;
++        self.engine.set_traffic(settings.traffic.clone())?;
+         queue.settings = settings;
+         Ok(())
+     }
+@@ -171,9 +174,10 @@ impl Session {
+     pub async fn open(database: &Path, destination: &Path) -> EngineResult<Arc<Self>> {
+         let store = Arc::new(SqliteStore::open(database)?);
+         let lease = SqliteStore::acquire_engine(database)?;
+-        let settings = match store.preference("desktop-v1").await? {
++        let mut settings = match store.preference("desktop-v1").await? {
+             Some(value) => serde_json::from_str(&value).map_err(|e| invalid(e.to_string()))?,
+             None => Settings {
++                traffic: store.config().await?.traffic,
+                 version: 1,
+                 destination: destination.to_string_lossy().into(),
+                 concurrency: 4,
+@@ -183,9 +187,13 @@ impl Session {
+         };
+         validate_settings(&settings)?;
+         let mut config = store.config().await?;
++        // CLI profile edits and desktop/API changes share one authoritative policy.
++        settings.traffic = config.traffic.clone();
++        validate_settings(&settings)?;
+         config.database_path = database.into();
+         // Desktop admission is independently adjustable up to 32; transport caps remain global.
+         config.max_concurrent_jobs = 32;
++        config.traffic = settings.traffic.clone();
+         let transport = Arc::new(HttpTransport::new(&config).map_err(|e| invalid(e.to_string()))?);
+         let engine = Arc::new(Engine::new(
+             config,
+@@ -347,7 +355,7 @@ impl okytes_browser_bridge::Handler for Session {
+ 
+ async fn admit(session: &Arc<Session>) -> EngineResult<()> {
+     let mut queue = session.queue.lock().await;
+-    if queue.stopping {
++    if queue.stopping || !session.engine.queue_allowed()? {
+         return Ok(());
+     }
+     queue.tasks.retain(|_, task| !task.is_finished());
+@@ -379,6 +387,7 @@ async fn admit(session: &Arc<Session>) -> EngineResult<()> {
+ }
+ 
+ fn validate_settings(settings: &Settings) -> EngineResult<()> {
++    settings.traffic.validate()?;
+     if settings.version != 1
+         || !(1..=32).contains(&settings.concurrency)
+         || !["light", "dark", "system"].contains(&settings.theme.as_str())
+@@ -655,12 +664,21 @@ impl DesktopService for Session {
+                 .await
+                 .map_err(|e| invalid(format!("cannot create destination: {e}")))?;
+             let mut queue = self.queue.lock().await;
++            let mut config = self.store.config().await?;
++            config.traffic = settings.traffic.clone();
+             self.store
+-                .set_preference(
+-                    "desktop-v1",
+-                    &serde_json::to_string(&settings).map_err(|e| invalid(e.to_string()))?,
+-                )
++                .set_preferences(vec![
++                    (
++                        "desktop-v1".into(),
++                        serde_json::to_string(&settings).map_err(|e| invalid(e.to_string()))?,
++                    ),
++                    (
++                        "engine".into(),
++                        serde_json::to_string(&config).map_err(|e| invalid(e.to_string()))?,
++                    ),
++                ])
+                 .await?;
++            self.engine.set_traffic(settings.traffic.clone())?;
+             queue.settings = settings;
+             Ok(())
+         })
+diff --git a/apps/desktop/src/App.test.tsx b/apps/desktop/src/App.test.tsx
+index e3b54cd..83b49db 100644
+--- a/apps/desktop/src/App.test.tsx
++++ b/apps/desktop/src/App.test.tsx
+@@ -40,6 +40,14 @@ beforeEach(() => {
+     concurrency: 4,
+     theme: "system",
+     notifications: true,
++    traffic: {
++      global_bps: null,
++      per_job_bps: null,
++      job_limits: [],
++      timezone: "UTC",
++      queue_allowed: true,
++      windows: [],
++    },
+   });
+   vi.mocked(api.add).mockResolvedValue(["new-id"]);
+ });
+diff --git a/apps/desktop/src/App.tsx b/apps/desktop/src/App.tsx
+index ffd3b71..c7bf977 100644
+--- a/apps/desktop/src/App.tsx
++++ b/apps/desktop/src/App.tsx
+@@ -1,6 +1,7 @@
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import * as Dialog from "@radix-ui/react-dialog";
+ import { useVirtualizer } from "@tanstack/react-virtual";
++import { TrafficSettings, defaultTraffic } from "./TrafficSettings";
+ import {
+   api,
+   bytes,
+@@ -843,6 +844,10 @@ export function App() {
+                 ))}
+               </select>
+             </label>
++            <TrafficSettings
++              policy={settings.traffic ?? defaultTraffic}
++              onChange={(traffic) => setSettings({ ...settings, traffic })}
++            />
+             <label className="checkbox">
+               <input
+                 type="checkbox"
+diff --git a/crates/core/Cargo.toml b/crates/core/Cargo.toml
+index 348f8ed..0b98228 100644
+--- a/crates/core/Cargo.toml
++++ b/crates/core/Cargo.toml
+@@ -14,6 +14,7 @@ utoipa.workspace = true
+ sha2.workspace = true
+ uuid.workspace = true
+ chrono.workspace = true
++chrono-tz = "0.10.4"
+ url.workspace = true
+ bytes.workspace = true
+ tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "rt"] }
+diff --git a/crates/core/bindings/Settings.ts b/crates/core/bindings/Settings.ts
+index 7a551d1..c264210 100644
+--- a/crates/core/bindings/Settings.ts
++++ b/crates/core/bindings/Settings.ts
+@@ -1,25 +1,30 @@
+ // This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
++import type { TrafficPolicy } from "./TrafficPolicy";
+ 
+ /**
+  * Persisted presentation and queue settings.
+  */
+-export type Settings = { 
++export type Settings = {
++/**
++ * Shared runtime bandwidth and queue schedule policy.
++ */
++traffic: TrafficPolicy,
+ /**
+  * Schema version, currently one.
+  */
+-version: number, 
++version: number,
+ /**
+  * Absolute default destination directory.
+  */
+-destination: string, 
++destination: string,
+ /**
+  * Concurrent jobs, from one to 32.
+  */
+-concurrency: number, 
++concurrency: number,
+ /**
+  * Light, dark or system.
+  */
+-theme: string, 
++theme: string,
+ /**
+  * Native completion/failure notifications.
+  */
+diff --git a/crates/core/src/desktop.rs b/crates/core/src/desktop.rs
+index be31d5b..bd7b15c 100644
+--- a/crates/core/src/desktop.rs
++++ b/crates/core/src/desktop.rs
+@@ -27,6 +27,9 @@ pub struct Submit {
+ #[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+ #[ts(export)]
+ pub struct Settings {
++    /// Shared runtime bandwidth and queue schedule policy.
++    #[serde(default)]
++    pub traffic: crate::traffic::TrafficPolicy,
+     /// Schema version, currently one.
+     pub version: u32,
+     /// Absolute default destination directory.
+diff --git a/crates/core/src/engine.rs b/crates/core/src/engine.rs
+index 0d0d690..3cdd0bf 100644
+--- a/crates/core/src/engine.rs
++++ b/crates/core/src/engine.rs
+@@ -45,11 +45,14 @@ pub struct Engine {
+     full_progress: Mutex<HashMap<JobId, u64>>,
+     workers: Mutex<HashMap<JobId, u32>>,
+     sessions: Mutex<HashMap<JobId, Vec<(String, String)>>>,
++    traffic: crate::traffic::TrafficController,
++    fair: Arc<crate::fairness::FairGate>,
+ }
+ struct Active<'a> {
+     ids: &'a Mutex<HashSet<JobId>>,
+     id: JobId,
+     full_progress: &'a Mutex<HashMap<JobId, u64>>,
++    traffic: &'a crate::traffic::TrafficController,
+ }
+ struct Worker<'a> {
+     counts: &'a Mutex<HashMap<JobId, u32>>,
+@@ -69,6 +72,7 @@ impl Drop for Worker<'_> {
+ }
+ impl Drop for Active<'_> {
+     fn drop(&mut self) {
++        self.traffic.release(self.id);
+         if let Ok(mut ids) = self.ids.lock() {
+             ids.remove(&self.id);
+         }
+@@ -95,6 +99,11 @@ impl Engine {
+         config.validate()?;
+         let (events, _) = broadcast::channel(config.channel_capacity.max(1));
+         Ok(Self {
++            fair: crate::fairness::FairGate::new(
++                config.max_connections_total,
++                config.max_connections_per_origin,
++            ),
++            traffic: crate::traffic::TrafficController::new(config.traffic.clone())?,
+             jobs: Semaphore::new(config.max_concurrent_jobs.max(1)),
+             config,
+             transport,
+@@ -108,6 +117,14 @@ impl Engine {
+             sessions: Mutex::new(HashMap::new()),
+         })
+     }
++    /// Apply persisted payload preferences without replacing running workers.
++    pub fn set_traffic(&self, policy: crate::traffic::TrafficPolicy) -> EngineResult<()> {
++        self.traffic.set(policy)
++    }
++    /// Current recurring queue gate. Uses UTC wall time and explicit IANA zone.
++    pub fn queue_allowed(&self) -> EngineResult<bool> {
++        self.traffic.queue_allowed(Utc::now())
++    }
+     /// Add a browser job using its request UUID for durable idempotency. Only the
+     /// authenticated queue owner may call this after checking existing records.
+     pub async fn add_captured(&self, request: DownloadRequest, id: JobId) -> EngineResult<JobId> {
+@@ -309,6 +326,7 @@ impl Engine {
+             ids: &self.active,
+             id,
+             full_progress: &self.full_progress,
++            traffic: &self.traffic,
+         };
+         let state = self.status(id).await?.state;
+         if state == JobState::Cancelled {
+@@ -328,6 +346,15 @@ impl Engine {
+         if state.is_terminal() || state == JobState::Paused {
+             return Ok(());
+         }
++        while !self.queue_allowed()? {
++            if matches!(
++                self.status(id).await?.state,
++                JobState::Paused | JobState::Cancelled
++            ) {
++                return Ok(());
++            }
++            tokio::time::sleep(Duration::from_millis(100)).await;
++        }
+         if state.is_active() || state == JobState::Failed {
+             self.transition(id, JobState::Queued).await?;
+         }
+@@ -413,11 +440,11 @@ impl Engine {
+         }
+         Ok(())
+     }
+-    async fn controlled<T>(
++    async fn controlled<T, E>(
+         &self,
+         id: JobId,
+-        operation: impl Future<Output = Result<T, TransportError>>,
+-    ) -> EngineResult<Option<Result<T, TransportError>>> {
++        operation: impl Future<Output = Result<T, E>>,
++    ) -> EngineResult<Option<Result<T, E>>> {
+         tokio::pin!(operation);
+         loop {
+             tokio::select! {
+@@ -551,12 +578,16 @@ impl Engine {
+             let mut window = Instant::now();
+             let mut first_error = None;
+             while !pending.is_empty() || !workers.is_empty() {
++                let admission = self.config.fixed_concurrency.unwrap_or(tuning.limit());
++                while !self.queue_allowed()? && self.running(id).await? {
++                    tokio::time::sleep(Duration::from_millis(100)).await;
++                }
+                 if first_error.is_some() || !self.running(id).await? {
+                     pending.clear();
+                 }
+                 // Split only relinquished tails: no active response can still
+                 // own either half. Persist both ownership updates atomically.
+-                while workers.len() + pending.len() < tuning.limit()
++                while workers.len() + pending.len() < admission
+                     && total_segments < self.config.max_segments_per_job
+                 {
+                     let Some(index) = pending
+@@ -595,19 +626,20 @@ impl Engine {
+                     pending.push_back(stolen);
+                     total_segments += 1;
+                 }
+-                while workers.len() < tuning.limit() && !pending.is_empty() {
++                while workers.len() < admission && !pending.is_empty() {
+                     if let Some(segment) = pending.pop_front() {
+                         workers.push(self.quantum(&job, segment));
+                     }
+                 }
+                 if let Some(result) = workers.next().await {
+-                    let (segment, bytes) = match result {
++                    let (segment, bytes, failures, latency_ms) = match result {
+                         Ok(result) => result,
+                         Err(error) => {
+                             first_error.get_or_insert(error);
+                             continue;
+                         }
+                     };
++                    tuning.health(failures, latency_ms);
+                     progress += bytes;
+                     sampled += bytes;
+                     if segment.is_complete() {
+@@ -616,7 +648,7 @@ impl Engine {
+                     if first_error.is_none() && !segment.is_complete() && self.running(id).await? {
+                         pending.push_back(segment);
+                     }
+-                    if window.elapsed() >= Duration::from_millis(100) {
++                    if window.elapsed() >= Duration::from_millis(250) {
+                         ewma.record(sampled, window.elapsed());
+                         tuning.observe(ewma.value());
+                         sampled = 0;
+@@ -649,7 +681,7 @@ impl Engine {
+         &self,
+         job: &JobRecord,
+         mut segment: SegmentRecord,
+-    ) -> EngineResult<(SegmentRecord, u64)> {
++    ) -> EngineResult<(SegmentRecord, u64, u32, f64)> {
+         let _worker = self.worker(job.id)?;
+         let headers = self.session_headers(job)?;
+         let before = segment.bytes_downloaded;
+@@ -660,8 +692,19 @@ impl Engine {
+         );
+         for attempt in 0..=self.config.max_retries {
+             if !self.running(job.id).await? {
+-                return Ok((segment, 0));
++                return Ok((segment, 0, 0, 0.0));
+             }
++            let Some(permit) = self
++                .controlled(
++                    job.id,
++                    self.fair
++                        .acquire(job.id, job.url.origin().ascii_serialization()),
++                )
++                .await?
++            else {
++                return Ok((segment, 0, 0, 0.0));
++            };
++            let permit = permit?;
+             let response_started = Instant::now();
+             let Some(response) = self
+                 .controlled(
+@@ -676,8 +719,9 @@ impl Engine {
+                 .await?
+             else {
+                 let delta = segment.bytes_downloaded - before;
+-                return Ok((segment, delta));
++                return Ok((segment, delta, attempt, 0.0));
+             };
++            let latency_ms = response_started.elapsed().as_secs_f64() * 1000.0;
+             let result = match response {
+                 Ok(response) => {
+                     self.response_received(job.id, response.status, response_started);
+@@ -693,6 +737,7 @@ impl Engine {
+                     source: Box::new(source),
+                 }),
+             };
++            drop(permit);
+             match result {
+                 Ok(()) => {
+                     if segment.is_complete() {
+@@ -700,7 +745,7 @@ impl Engine {
+                         self.store.checkpoint_segment(&segment).await?;
+                     }
+                     let delta = segment.bytes_downloaded - before;
+-                    return Ok((segment, delta));
++                    return Ok((segment, delta, attempt, latency_ms));
+                 }
+                 Err(EngineError::Transport { source, .. })
+                     if retryable(&source) && attempt < self.config.max_retries =>
+@@ -748,7 +793,22 @@ impl Engine {
+             }
+             let mut incoming = chunk.as_ref();
+             while !incoming.is_empty() {
+-                let take = incoming.len().min(buffer_limit - pending.len());
++                let wanted = incoming.len().min(buffer_limit - pending.len()).min(16384);
++                let take = loop {
++                    let granted = self.traffic.take(
++                        job.id,
++                        wanted,
++                        tokio::time::Instant::now(),
++                        Utc::now(),
++                    )?;
++                    if granted > 0 {
++                        break granted;
++                    }
++                    if !self.running(job.id).await? {
++                        return Ok(());
++                    }
++                    tokio::time::sleep(Duration::from_millis(10)).await;
++                };
+                 pending.extend_from_slice(&incoming[..take]);
+                 incoming = &incoming[take..];
+                 if pending.len() == buffer_limit {
+diff --git a/crates/core/src/lib.rs b/crates/core/src/lib.rs
+index d553818..c24223c 100644
+--- a/crates/core/src/lib.rs
++++ b/crates/core/src/lib.rs
+@@ -24,11 +24,13 @@
+ pub mod desktop;
+ pub mod engine;
+ pub mod error;
++pub mod fairness;
+ pub mod files;
+ pub mod range;
+ pub mod scheduler;
+ pub mod service;
+ pub mod state;
+ pub mod store;
++pub mod traffic;
+ pub mod transport;
+ pub mod types;
+diff --git a/crates/core/src/scheduler.rs b/crates/core/src/scheduler.rs
+index e0fc6f9..c15b6bb 100644
+--- a/crates/core/src/scheduler.rs
++++ b/crates/core/src/scheduler.rs
+@@ -177,12 +177,17 @@ pub fn retry_delay(
+ /// Thread-safe wrapper around the connection tracker.
+ pub type SharedConnectionTracker = Arc<Mutex<ConnectionTracker>>;
+ 
+-/// Conservative throughput hill-climber. A second improving EWMA window is
+-/// required before adding a worker; flat or declining windows remove a worker.
++/// Throughput hill-climber with bounded exploration, latency checks, health
++/// backoff and a frozen plateau to avoid repeated no-gain probes.
+ pub struct AdaptiveConcurrency {
+     limit: usize,
+     max: usize,
+-    previous: Option<f64>,
++    baseline: Option<f64>,
++    windows: u32,
++    probe: Option<(usize, f64, f64, u32)>,
++    frozen: bool,
++    latency_ms: Option<f64>,
++    probe_latency_ms: Option<f64>,
+ }
+ impl AdaptiveConcurrency {
+     /// Start with one worker, bounded by the configured cap.
+@@ -190,23 +195,98 @@ impl AdaptiveConcurrency {
+         Self {
+             limit: 1,
+             max: max.max(1),
+-            previous: None,
++            baseline: None,
++            windows: 0,
++            probe: None,
++            frozen: false,
++            latency_ms: None,
++            probe_latency_ms: None,
+         }
+     }
+     /// Current worker admission limit.
+     pub fn limit(&self) -> usize {
+         self.limit
+     }
+-    /// Observe a completed effective-throughput window.
++    /// Connection resets and throttling cut admission immediately. Header
++    /// latency is retained as a saturation signal for candidate evaluation.
++    pub fn health(&mut self, failures: u32, latency_ms: f64) {
++        if failures > 0 {
++            self.limit = (self.limit / 2).max(1);
++            self.probe = None;
++            self.baseline = None;
++            self.windows = 0;
++            self.frozen = true;
++        }
++        if latency_ms.is_finite() && latency_ms > 0.0 {
++            self.latency_ms = Some(
++                self.latency_ms
++                    .map_or(latency_ms, |old| old * 0.7 + latency_ms * 0.3),
++            );
++        }
++    }
++    /// Evaluate a bounded probe after two stable EWMA windows. More workers
++    /// remain only after a >=12% aggregate gain; a failed probe freezes further
++    /// exploration until conditions materially change. One settling window and
++    /// two measured windows prevent single completion bursts driving changes.
+     pub fn observe(&mut self, throughput: f64) {
+-        if let Some(previous) = self.previous {
+-            if throughput > previous * 1.05 {
+-                self.limit = (self.limit + 1).min(self.max);
++        if !throughput.is_finite() || throughput <= 0.0 {
++            return;
++        }
++        if let Some((old, baseline, sum, samples)) = self.probe {
++            if samples == 0 {
++                self.probe = Some((old, baseline, 0.0, 1));
++                return;
++            }
++            let sum = sum + throughput;
++            if samples < 2 {
++                self.probe = Some((old, baseline, sum, samples + 1));
++                return;
++            }
++            let candidate = sum / 2.0;
++            let latency_penalty = self
++                .probe_latency_ms
++                .zip(self.latency_ms)
++                .is_some_and(|(before, after)| after > before * 1.5 && candidate < baseline * 1.25);
++            if candidate >= baseline * 1.12 && !latency_penalty {
++                self.baseline = Some(candidate);
++                self.frozen = false;
+             } else {
+-                self.limit = self.limit.saturating_sub(1).max(1);
++                self.limit = old;
++                self.baseline = Some(baseline);
++                self.frozen = true;
++            }
++            self.probe = None;
++            self.windows = 0;
++            return;
++        }
++        let Some(baseline) = self.baseline else {
++            self.baseline = Some(throughput);
++            return;
++        };
++        if self.frozen {
++            // No repeated probes on a flat link: noise within 25% stays frozen.
++            if (throughput - baseline).abs() > baseline * 0.25 {
++                self.frozen = false;
++                self.baseline = Some(throughput);
++                self.windows = 0;
+             }
++            return;
++        }
++        if throughput < baseline * 0.75 && self.limit > 1 {
++            self.limit -= 1;
++            self.baseline = Some(throughput);
++            self.windows = 0;
++            return;
++        }
++        self.baseline = Some(baseline * 0.7 + throughput * 0.3);
++        self.windows += 1;
++        if self.windows >= 2 && self.limit < self.max {
++            let baseline = self.baseline.unwrap_or(throughput);
++            self.probe_latency_ms = self.latency_ms;
++            self.probe = Some((self.limit, baseline, 0.0, 0));
++            self.limit += 1;
++            self.windows = 0;
+         }
+-        self.previous = Some(throughput);
+     }
+ }
+ 
+@@ -214,20 +294,32 @@ impl AdaptiveConcurrency {
+ mod tests {
+     use super::*;
+     #[test]
+-    fn adaptive_admission_requires_improvement_and_backs_off() {
++    fn adaptive_probes_gain_then_health_backs_off() {
+         let mut scheduler = AdaptiveConcurrency::new(3);
+-        scheduler.observe(100.0);
+-        assert_eq!(scheduler.limit(), 1);
+-        scheduler.observe(120.0);
++        for _ in 0..3 {
++            scheduler.observe(100.0);
++        }
+         assert_eq!(scheduler.limit(), 2);
+-        scheduler.observe(140.0);
++        for _ in 0..3 {
++            scheduler.observe(200.0);
++        }
++        for _ in 0..2 {
++            scheduler.observe(200.0);
++        }
+         assert_eq!(scheduler.limit(), 3);
+-        scheduler.observe(140.0);
+-        assert_eq!(scheduler.limit(), 2);
+-        scheduler.observe(90.0);
++        scheduler.health(1, 100.0);
+         assert_eq!(scheduler.limit(), 1);
+     }
+ 
++    proptest::proptest! {
++        #[test]
++        fn saturated_link_settles_without_oscillation(noise in proptest::collection::vec(-4i32..=4, 100..300), max in 2usize..128) {
++            let mut scheduler=AdaptiveConcurrency::new(max);let mut changes=0;let mut previous=1;
++            for sample in noise {scheduler.observe(100.0+sample as f64);if scheduler.limit()!=previous {changes+=1;previous=scheduler.limit();}proptest::prop_assert!(scheduler.limit()>=1 && scheduler.limit()<=max);}
++            proptest::prop_assert!(changes<=2);proptest::prop_assert_eq!(scheduler.limit(),1);
++        }
++    }
++
+     #[test]
+     fn test_connection_tracker_basic() {
+         let mut tracker = ConnectionTracker::new(2);
+diff --git a/crates/core/src/types.rs b/crates/core/src/types.rs
+index 4c5bdba..1594c55 100644
+--- a/crates/core/src/types.rs
++++ b/crates/core/src/types.rs
+@@ -227,15 +227,28 @@ impl SegmentRecord {
+     }
+ }
+ 
++fn default_connection_cap() -> usize {
++    16
++}
++
+ /// Configuration for the download engine.
+ #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+ pub struct EngineConfig {
++    /// Live payload limits and recurring queue/bandwidth windows.
++    #[serde(default)]
++    pub traffic: crate::traffic::TrafficPolicy,
++    /// Fixed worker count for reproducible controls; null enables adaptation.
++    #[serde(default)]
++    pub fixed_concurrency: Option<usize>,
+     /// Maximum concurrent downloads.
+     pub max_concurrent_jobs: usize,
+     /// Maximum segments per download.
+     pub max_segments_per_job: usize,
+     /// Maximum connections per origin (host:port).
+     pub max_connections_per_origin: usize,
++    /// Aggregate transport connections, including probes and redirected bodies.
++    #[serde(default = "default_connection_cap")]
++    pub max_connections_total: usize,
+     /// Minimum segment size in bytes. Segments smaller than this will not be
+     /// split further.
+     pub min_segment_size: u64,
+@@ -268,9 +281,12 @@ pub struct EngineConfig {
+ impl Default for EngineConfig {
+     fn default() -> Self {
+         Self {
++            fixed_concurrency: None,
++            traffic: Default::default(),
+             max_concurrent_jobs: 4,
+             max_segments_per_job: 8,
+             max_connections_per_origin: 6,
++            max_connections_total: default_connection_cap(),
+             min_segment_size: 512 * 1024,       // 512 KiB
+             max_segment_size: 64 * 1024 * 1024, // 64 MiB
+             connect_timeout_secs: 30,
+@@ -290,13 +306,18 @@ impl Default for EngineConfig {
+ impl EngineConfig {
+     /// Reject invalid settings and allocations beyond the supported bounds.
+     pub fn validate(&self) -> crate::error::EngineResult<()> {
++        self.traffic.validate()?;
+         let c = self;
+-        if c.max_concurrent_jobs == 0
++        if c.fixed_concurrency
++            .is_some_and(|n| n == 0 || n > c.max_segments_per_job)
++            || c.max_concurrent_jobs == 0
+             || c.max_concurrent_jobs > 32
+             || c.max_segments_per_job == 0
+             || c.max_segments_per_job > 128
+             || c.max_connections_per_origin == 0
+             || c.max_connections_per_origin > 128
++            || c.max_connections_total == 0
++            || c.max_connections_total > 128
+             || c.min_segment_size == 0
+             || c.max_segment_size < c.min_segment_size
+             || c.max_segment_size > 64 * 1024 * 1024
+diff --git a/crates/test-support/Cargo.toml b/crates/test-support/Cargo.toml
+index 5236076..13957c2 100644
+--- a/crates/test-support/Cargo.toml
++++ b/crates/test-support/Cargo.toml
+@@ -17,3 +17,6 @@ bytes.workspace = true
+ rand.workspace = true
+ sha2.workspace = true
+ futures.workspace = true
++
++[dev-dependencies]
++reqwest.workspace = true
+diff --git a/crates/test-support/src/server.rs b/crates/test-support/src/server.rs
+index fcf83ac..9e27705 100644
+--- a/crates/test-support/src/server.rs
++++ b/crates/test-support/src/server.rs
+@@ -8,8 +8,9 @@ use hyper::{body::Frame, server::conn::http1, service::service_fn, Method, Reque
+ use hyper_util::rt::TokioIo;
+ use sha2::{Digest, Sha256};
+ use std::{
++    collections::HashMap,
+     convert::Infallible,
+-    net::SocketAddr,
++    net::{IpAddr, SocketAddr},
+     sync::{
+         atomic::{AtomicU64, AtomicUsize, Ordering},
+         Arc, Mutex,
+@@ -28,6 +29,16 @@ pub struct ServerConfig {
+     pub seed: u64,
+     /// Delay per body frame for slow-transfer/control tests.
+     pub frame_delay: Duration,
++    /// Delay before each response's headers (including probes).
++    pub latency: Duration,
++    /// Per-client-IP payload cap. Null is unlimited; pacing has no burst.
++    pub bandwidth_bps: Option<u64>,
++    /// Independent payload cap for each response body.
++    pub connection_bps: Option<u64>,
++    /// Reject bodies above this per-client-IP concurrency with 429 and Retry-After: 1.
++    pub max_active: Option<usize>,
++    /// Reset every Nth body halfway through; zero disables injection.
++    pub disconnect_every: usize,
+ }
+ impl Default for ServerConfig {
+     fn default() -> Self {
+@@ -35,6 +46,11 @@ impl Default for ServerConfig {
+             file_size: 1024 * 1024,
+             seed: 42,
+             frame_delay: Duration::ZERO,
++            latency: Duration::ZERO,
++            bandwidth_bps: None,
++            connection_bps: None,
++            max_active: None,
++            disconnect_every: 0,
+         }
+     }
+ }
+@@ -58,11 +74,21 @@ struct State {
+     throttles: AtomicUsize,
+     active: AtomicUsize,
+     peak: AtomicUsize,
++    pacing: tokio::sync::Mutex<HashMap<IpAddr, tokio::time::Instant>>,
++    clients: Mutex<HashMap<IpAddr, usize>>,
+ }
+-struct Active(Arc<State>);
++struct Active(Arc<State>, IpAddr);
+ impl Drop for Active {
+     fn drop(&mut self) {
+         self.0.active.fetch_sub(1, Ordering::SeqCst);
++        if let Ok(mut clients) = self.0.clients.lock() {
++            if let Some(count) = clients.get_mut(&self.1) {
++                *count = count.saturating_sub(1);
++                if *count == 0 {
++                    clients.remove(&self.1);
++                }
++            }
++        }
+     }
+ }
+ 
+@@ -100,6 +126,8 @@ impl TestServer {
+             throttles: AtomicUsize::new(0),
+             active: AtomicUsize::new(0),
+             peak: AtomicUsize::new(0),
++            pacing: tokio::sync::Mutex::new(HashMap::new()),
++            clients: Mutex::new(HashMap::new()),
+         });
+         let (shutdown, mut stop) = oneshot::channel();
+         let shared = state.clone();
+@@ -110,9 +138,11 @@ impl TestServer {
+                     _=&mut stop=>break,
+                     Some(_)=connections.join_next(),if !connections.is_empty()=>{},
+                     connection=listener.accept()=>{
+-                        let Ok((socket,_))=connection else {break};let state=shared.clone();
++                        let Ok((socket,peer))=connection else {break};
++                        if connections.len()>=512 {drop(socket);continue;}
++                        let state=shared.clone();
+                         connections.spawn(async move {
+-                            let service=service_fn(move |req|handle_request(req,state.clone()));
++                            let service=service_fn(move |req|handle_request(req,state.clone(),peer.ip()));
+                             let _=http1::Builder::new().serve_connection(TokioIo::new(socket),service).await;
+                         });
+                     }
+@@ -199,7 +229,11 @@ fn response(status: u16, headers: Vec<(&str, String)>, body: Body) -> Response<B
+ async fn handle_request(
+     req: Request<hyper::body::Incoming>,
+     state: Arc<State>,
++    client: IpAddr,
+ ) -> Result<Response<Body>, Infallible> {
++    if !state.config.latency.is_zero() {
++        tokio::time::sleep(state.config.latency).await;
++    }
+     let path = req.uri().path().to_owned();
+     let range = req
+         .headers()
+@@ -346,8 +380,21 @@ async fn handle_request(
+     if req.method() == Method::HEAD {
+         return Ok(response(status, headers, empty()));
+     }
++    {
++        let Ok(mut clients) = state.clients.lock() else {
++            return Ok(response(503, vec![], empty()));
++        };
++        let count = clients.entry(client).or_default();
++        if state.config.max_active.is_some_and(|cap| *count >= cap) {
++            return Ok(response(429, vec![("retry-after", "1".into())], empty()));
++        }
++        *count += 1;
++    }
++    let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
+     let get = state.gets.fetch_add(1, Ordering::SeqCst);
+-    let disconnect = path == "/mid-disconnect" && get == 0;
++    let disconnect = (path == "/mid-disconnect" && get == 0)
++        || (state.config.disconnect_every > 0
++            && (get + 1).is_multiple_of(state.config.disconnect_every));
+     let corrupt = path == "/corrupted";
+     let delay = if path == "/accelerating" {
+         if get < 2 {
+@@ -360,38 +407,57 @@ async fn handle_request(
+     } else {
+         state.config.frame_delay
+     };
+-    let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
+     state.peak.fetch_max(active, Ordering::SeqCst);
+-    let guard = Active(state.clone());
++    let guard = Active(state.clone(), client);
++    let pacing = state.clone();
+     let seed = state.config.seed + version - 1;
+     let midpoint = start + (end - start) / 2;
+     let body = stream::unfold(
+         (start, Some(guard), false),
+-        move |(offset, guard, failed)| async move {
+-            if offset >= end || failed {
+-                return None;
+-            }
+-            if !delay.is_zero() {
+-                tokio::time::sleep(delay).await;
+-            }
+-            if disconnect && offset >= midpoint {
+-                return Some((
+-                    Err(std::io::Error::new(
+-                        std::io::ErrorKind::ConnectionReset,
+-                        "injected disconnect",
+-                    )),
+-                    (offset, guard, true),
+-                ));
+-            }
+-            let len = (end - offset).min(65536);
+-            let mut bytes = content(offset, len, seed);
+-            if corrupt && !bytes.is_empty() {
+-                bytes[0] ^= 0xff;
++        move |(offset, guard, failed)| {
++            let pacing = pacing.clone();
++            async move {
++                if offset >= end || failed {
++                    return None;
++                }
++                if !delay.is_zero() {
++                    tokio::time::sleep(delay).await;
++                }
++                if disconnect && offset >= midpoint {
++                    return Some((
++                        Err(std::io::Error::new(
++                            std::io::ErrorKind::ConnectionReset,
++                            "injected disconnect",
++                        )),
++                        (offset, guard, true),
++                    ));
++                }
++                let len = (end - offset).min(65536);
++                if let Some(rate) = pacing.config.connection_bps {
++                    tokio::time::sleep(Duration::from_secs_f64(len as f64 / rate.max(1) as f64))
++                        .await;
++                }
++                if let Some(rate) = pacing.config.bandwidth_bps {
++                    let deadline = {
++                        let mut clocks = pacing.pacing.lock().await;
++                        let now = tokio::time::Instant::now();
++                        clocks.retain(|_, deadline| *deadline > now);
++                        let clock = clocks.entry(client).or_insert(now);
++                        *clock = (*clock).max(now)
++                            + Duration::from_secs_f64(len as f64 / rate.max(1) as f64);
++                        *clock
++                    };
++                    tokio::time::sleep_until(deadline).await;
++                }
++                let mut bytes = content(offset, len, seed);
++                if corrupt && !bytes.is_empty() {
++                    bytes[0] ^= 0xff;
++                }
++                Some((
++                    Ok(Frame::data(Bytes::from(bytes))),
++                    (offset + len, guard, false),
++                ))
+             }
+-            Some((
+-                Ok(Frame::data(Bytes::from(bytes))),
+-                (offset + len, guard, false),
+-            ))
+         },
+     );
+     Ok(response(
+@@ -423,4 +489,38 @@ mod tests {
+         assert_eq!(server.content_hash.len(), 64);
+         server.shutdown().await;
+     }
++    #[tokio::test]
++    async fn connection_penalty_is_per_ip_not_shared_across_clients() {
++        let server = TestServer::start(ServerConfig {
++            file_size: 256 * 1024,
++            max_active: Some(1),
++            frame_delay: Duration::from_millis(100),
++            ..Default::default()
++        })
++        .await
++        .unwrap();
++        let first = reqwest::Client::builder()
++            .local_address(Some("127.0.0.1".parse::<IpAddr>().unwrap()))
++            .build()
++            .unwrap();
++        let other = reqwest::Client::builder()
++            .local_address(Some("127.0.0.2".parse::<IpAddr>().unwrap()))
++            .build()
++            .unwrap();
++        let held = first.get(server.url("/normal")).send().await.unwrap();
++        assert_eq!(held.status(), 200);
++        assert_eq!(
++            first
++                .get(server.url("/normal"))
++                .send()
++                .await
++                .unwrap()
++                .status(),
++            429
++        );
++        let separate = other.get(server.url("/normal")).send().await.unwrap();
++        assert_eq!(separate.status(), 200);
++        assert_eq!(held.bytes().await.unwrap().len(), 256 * 1024);
++        assert_eq!(separate.bytes().await.unwrap().len(), 256 * 1024);
++    }
+ }
+diff --git a/crates/transport-http/src/lib.rs b/crates/transport-http/src/lib.rs
+index 6470e1f..54e6c47 100644
+--- a/crates/transport-http/src/lib.rs
++++ b/crates/transport-http/src/lib.rs
+@@ -26,6 +26,11 @@ pub struct HttpTransport {
+     client: Client,
+     origins: Mutex<HashMap<String, Weak<Semaphore>>>,
+     cap: usize,
++    global: Arc<Semaphore>,
++}
++struct ConnectionPermit {
++    _origin: OwnedSemaphorePermit,
++    _global: OwnedSemaphorePermit,
+ }
+ 
+ fn request_error(url: &Url, error: impl std::fmt::Display) -> TransportError {
+@@ -52,6 +57,7 @@ impl HttpTransport {
+             client,
+             origins: Mutex::new(HashMap::new()),
+             cap: config.max_connections_per_origin.max(1),
++            global: Arc::new(Semaphore::new(config.max_connections_total)),
+         })
+     }
+ 
+@@ -62,7 +68,7 @@ impl HttpTransport {
+         headers: &[(String, String)],
+         range: Option<(u64, u64)>,
+         identity: Option<&RemoteIdentity>,
+-    ) -> Result<(Response, OwnedSemaphorePermit), TransportError> {
++    ) -> Result<(Response, ConnectionPermit), TransportError> {
+         let mut target = url.clone();
+         for _ in 0..=10 {
+             if !matches!(target.scheme(), "http" | "https")
+@@ -85,10 +91,20 @@ impl HttpTransport {
+                 origins.insert(origin, Arc::downgrade(&semaphore));
+                 semaphore
+             };
+-            let permit = semaphore
++            let global = self
++                .global
++                .clone()
+                 .acquire_owned()
+                 .await
+                 .map_err(|e| request_error(&target, e))?;
++            let origin_permit = semaphore
++                .acquire_owned()
++                .await
++                .map_err(|e| request_error(&target, e))?;
++            let permit = ConnectionPermit {
++                _origin: origin_permit,
++                _global: global,
++            };
+             let mut map = HeaderMap::new();
+             for (name, value) in headers {
+                 let name = HeaderName::from_bytes(name.as_bytes())
+diff --git a/packages/sdk-typescript/src/schema.ts b/packages/sdk-typescript/src/schema.ts
+index c56597b..ac88270 100644
+--- a/packages/sdk-typescript/src/schema.ts
++++ b/packages/sdk-typescript/src/schema.ts
+@@ -344,10 +344,14 @@ export interface components {
+              * @description EWMA smoothing factor for throughput measurement (0.0–1.0).
+              */
+             ewma_alpha: number;
++            /** @description Fixed worker count for reproducible controls; null enables adaptation. */
++            fixed_concurrency?: number | null;
+             /** @description Maximum concurrent downloads. */
+             max_concurrent_jobs: number;
+             /** @description Maximum connections per origin (host:port). */
+             max_connections_per_origin: number;
++            /** @description Aggregate transport connections, including probes and redirected bodies. */
++            max_connections_total?: number;
+             /**
+              * Format: int32
+              * @description Maximum retry attempts per segment.
+@@ -381,6 +385,8 @@ export interface components {
+              * @description Maximum backoff delay in milliseconds.
+              */
+             retry_max_delay_ms: number;
++            /** @description Live payload limits and recurring queue/bandwidth windows. */
++            traffic?: components["schemas"]["TrafficPolicy"];
+             /** @description Bounded buffer size for write operations in bytes. */
+             write_buffer_size: number;
+         };
+@@ -486,6 +492,16 @@ export interface components {
+              */
+             workers: number;
+         };
++        /** @description Per-job payload override. Removing an override restores the default rate. */
++        JobLimit: {
++            /**
++             * Format: int64
++             * @description Positive bytes/second, or null for an unlimited job.
++             */
++            bps?: number | null;
++            /** @description UUID of the job to limit. */
++            id: string;
++        };
+         /** @description Persistent metadata for a download job. */
+         JobRecord: {
+             /**
+@@ -616,6 +632,31 @@ export interface components {
+              */
+             version: number;
+         };
++        /**
++         * @description Recurring window. Start is inclusive, end exclusive; overnight windows
++         *     belong to their starting weekday. Overlapping rules use the stricter limit.
++         */
++        ScheduleWindow: {
++            /** @description Monday=0 through Sunday=6; at least one distinct day. */
++            days: number[];
++            /**
++             * Format: int32
++             * @description Local end minute, 0..1440; must differ from start.
++             */
++            end_minute: number;
++            /**
++             * Format: int64
++             * @description Optional aggregate cap applied in addition to the base cap.
++             */
++            global_bps?: number | null;
++            /** @description Null leaves queue behavior unchanged; false closes the queue. */
++            queue_allowed?: boolean | null;
++            /**
++             * Format: int32
++             * @description Local start minute, 0..1439.
++             */
++            start_minute: number;
++        };
+         /**
+          * @description Monotonic capability hierarchy; control cannot manage token credentials.
+          * @enum {string}
+@@ -654,6 +695,8 @@ export interface components {
+             notifications: boolean;
+             /** @description Light, dark or system. */
+             theme: string;
++            /** @description Shared runtime bandwidth and queue schedule policy. */
++            traffic?: components["schemas"]["TrafficPolicy"];
+             /**
+              * Format: int32
+              * @description Schema version, currently one.
+@@ -699,6 +742,41 @@ export interface components {
+             /** @description Effective capability scope. */
+             scope: components["schemas"]["Scope"];
+         };
++        /** @description Persistent payload policy shared by every backend. Null rates are unlimited. */
++        TrafficPolicy: {
++            /**
++             * Format: int64
++             * @description Aggregate bytes/second across all jobs.
++             * @default null
++             */
++            global_bps: number | null;
++            /**
++             * @description Explicit overrides, at most 128 unique job UUIDs.
++             * @default []
++             */
++            job_limits: components["schemas"]["JobLimit"][];
++            /**
++             * Format: int64
++             * @description Default bytes/second for each job independently.
++             * @default null
++             */
++            per_job_bps: number | null;
++            /**
++             * @description Whether the queue runs outside matching queue windows.
++             * @default true
++             */
++            queue_allowed: boolean;
++            /**
++             * @description IANA timezone, independent of the host's local zone.
++             * @default UTC
++             */
++            timezone: string;
++            /**
++             * @description At most 32 recurring local-time windows.
++             * @default []
++             */
++            windows: components["schemas"]["ScheduleWindow"][];
++        };
+         /** @description Bounded stream notifications. Clients must replace snapshots on Resync. */
+         Update: {
+             /** @enum {string} */

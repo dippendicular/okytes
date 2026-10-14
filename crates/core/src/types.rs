@@ -227,15 +227,28 @@ impl SegmentRecord {
     }
 }
 
+fn default_connection_cap() -> usize {
+    16
+}
+
 /// Configuration for the download engine.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EngineConfig {
+    /// Live payload limits and recurring queue/bandwidth windows.
+    #[serde(default)]
+    pub traffic: crate::traffic::TrafficPolicy,
+    /// Fixed worker count for reproducible controls; null enables adaptation.
+    #[serde(default)]
+    pub fixed_concurrency: Option<usize>,
     /// Maximum concurrent downloads.
     pub max_concurrent_jobs: usize,
     /// Maximum segments per download.
     pub max_segments_per_job: usize,
     /// Maximum connections per origin (host:port).
     pub max_connections_per_origin: usize,
+    /// Aggregate transport connections, including probes and redirected bodies.
+    #[serde(default = "default_connection_cap")]
+    pub max_connections_total: usize,
     /// Minimum segment size in bytes. Segments smaller than this will not be
     /// split further.
     pub min_segment_size: u64,
@@ -268,9 +281,12 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
+            fixed_concurrency: None,
+            traffic: Default::default(),
             max_concurrent_jobs: 4,
             max_segments_per_job: 8,
             max_connections_per_origin: 6,
+            max_connections_total: default_connection_cap(),
             min_segment_size: 512 * 1024,       // 512 KiB
             max_segment_size: 64 * 1024 * 1024, // 64 MiB
             connect_timeout_secs: 30,
@@ -290,13 +306,18 @@ impl Default for EngineConfig {
 impl EngineConfig {
     /// Reject invalid settings and allocations beyond the supported bounds.
     pub fn validate(&self) -> crate::error::EngineResult<()> {
+        self.traffic.validate()?;
         let c = self;
-        if c.max_concurrent_jobs == 0
+        if c.fixed_concurrency
+            .is_some_and(|n| n == 0 || n > c.max_segments_per_job)
+            || c.max_concurrent_jobs == 0
             || c.max_concurrent_jobs > 32
             || c.max_segments_per_job == 0
             || c.max_segments_per_job > 128
             || c.max_connections_per_origin == 0
             || c.max_connections_per_origin > 128
+            || c.max_connections_total == 0
+            || c.max_connections_total > 128
             || c.min_segment_size == 0
             || c.max_segment_size < c.min_segment_size
             || c.max_segment_size > 64 * 1024 * 1024

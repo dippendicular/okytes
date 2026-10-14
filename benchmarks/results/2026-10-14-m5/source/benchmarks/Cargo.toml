@@ -1,0 +1,22 @@
+[package]
+name = "okytes-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+okytes-core.workspace = true
+okytes-persistence.workspace = true
+okytes-transport-http.workspace = true
+okytes-test-support.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+chrono.workspace = true
+futures.workspace = true
+sysinfo = "0.39.6"
+sha2.workspace = true
+tempfile.workspace = true
