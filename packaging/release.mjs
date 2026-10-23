@@ -39,5 +39,5 @@ await writeFile(
 );
 await writeFile(
   join(directory, "INSTALLATION.md"),
-  await readFile("packaging/INSTALLATION.md"),
+  await readFile("INSTALLATION.md"),
 );

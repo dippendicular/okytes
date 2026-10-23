@@ -11,6 +11,8 @@ Its HTTP API is authenticated on every route, including the contract and events.
 From the repository root:
 
 ```sh
+pnpm --dir apps/desktop install --frozen-lockfile
+pnpm --dir apps/desktop build:quick
 cargo build -p okytes-daemon --locked
 ```
 

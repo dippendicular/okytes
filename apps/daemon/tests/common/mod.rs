@@ -14,6 +14,13 @@ pub struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
+        Self::configured(false).await
+    }
+    #[allow(dead_code)] // Shared helper; native-only suites intentionally leave Quick disabled.
+    pub async fn quick() -> Self {
+        Self::configured(true).await
+    }
+    async fn configured(quick: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -32,6 +39,9 @@ impl Fixture {
         .await
         .expect("API provisioning timeout")
         .unwrap();
+        if quick {
+            api.quick.enable(&addr.to_string()).unwrap();
+        }
         let token = String::from_utf8(
             okytes_browser_bridge::read_secret(&root.path().join("daemon-admin.token")).unwrap(),
         )

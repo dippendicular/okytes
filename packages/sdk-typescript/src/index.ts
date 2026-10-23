@@ -1,6 +1,7 @@
 import createClient from "openapi-fetch";
 import type { paths, components } from "./schema.js";
 export type { paths, components } from "./schema.js";
+export { createQuick } from "./quick.js";
 export interface Options {
   baseUrl: string;
   token: string;

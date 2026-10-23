@@ -1,4 +1,4 @@
-name: Release candidate
+name: Release
 on:
   push:
     tags: ["v*"]
@@ -69,6 +69,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
       - run: node scripts/prepare-vendor.mjs
+      - name: Bundle local Quick Download assets
+        run: |
+          pnpm --dir apps/desktop install --frozen-lockfile
+          pnpm --dir apps/desktop build:quick
       - name: Rust acceptance checks
         shell: bash
         run: |
@@ -97,7 +101,10 @@ jobs:
         shell: bash
         env:
           UPDATE_SIGNING_ENABLED: "false"
-        run: node packaging/configure.mjs "$PLATFORM" .tools-release.json
+        run: |
+          cargo build --release --locked --target "$TARGET" -p okytes-cli -p okytes-daemon -p okytes-native-host
+          node packaging/companions.mjs "target/$TARGET/release" "$TARGET"
+          node packaging/configure.mjs "$PLATFORM" .tools-release.json
       - name: Compile application and companions without signing secrets
         shell: bash
         run: |
@@ -189,7 +196,7 @@ jobs:
           name: candidate-${{ matrix.target }}
           path: artifacts/
           if-no-files-found: error
-  draft:
+  publish:
     needs: build
     runs-on: ubuntu-22.04
     environment: release
@@ -225,9 +232,9 @@ jobs:
         with:
           name: release-dry-run
           path: artifacts/
-      - name: Publish draft for human review
+      - name: Publish latest release
         if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --draft --title "Okytes $RELEASE_TAG" --notes-file artifacts/release-notes.md artifacts/*
+        run: gh release create "$RELEASE_TAG" --verify-tag --latest --title "Okytes $RELEASE_TAG" --notes-file artifacts/release-notes.md artifacts/*

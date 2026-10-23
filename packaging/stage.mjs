@@ -35,7 +35,7 @@ for (const name of ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE"]) {
 }
 await writeFile(
   join(output, "INSTALLATION.md"),
-  await readFile("packaging/INSTALLATION.md"),
+  await readFile("INSTALLATION.md"),
 );
 await writeFile(join(output, "target.txt"), `${target}\n`);
 await cp(

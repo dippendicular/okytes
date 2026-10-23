@@ -5,6 +5,8 @@ import { FileTransferForm, MediaForm } from "./Transfers";
 import { TorrentForm, TorrentDiagnostics } from "./Torrents";
 import { TrafficSettings, defaultTraffic } from "./TrafficSettings";
 import { Updates } from "./Updates";
+import { QuickAccess } from "./QuickAccess";
+import { PeerShare } from "./PeerShare";
 import {
   api,
   bytes,
@@ -74,6 +76,7 @@ export function App() {
   const [torrentOpen, setTorrentOpen] = useState(false);
   const [fileOpen, setFileOpen] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
+  const [peerOpen, setPeerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>();
@@ -297,6 +300,7 @@ export function App() {
         <button onClick={() => setTorrentOpen(true)}>Add torrent</button>
         <button onClick={() => setFileOpen(true)}>Add FTP / SFTP</button>
         <button onClick={() => setMediaOpen(true)}>Add media</button>
+        <button onClick={() => setPeerOpen(true)}>LAN Share</button>
         <nav aria-label="Download views">
           {views.map((name) => (
             <button
@@ -349,6 +353,7 @@ export function App() {
       </aside>
       <main>
         <header>
+          <QuickAccess />
           <div>
             <p className="eyebrow">YOUR DOWNLOADS</p>
             <h1>{view}</h1>
@@ -947,6 +952,14 @@ export function App() {
             <Updates />
           </form>
         )}
+      </Modal>
+      <Modal
+        error={error}
+        title="LAN Share"
+        open={peerOpen}
+        onOpenChange={setPeerOpen}
+      >
+        <PeerShare report={setError} />
       </Modal>
       <Modal
         error={error}

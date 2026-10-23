@@ -26,6 +26,7 @@ pub mod engine;
 pub mod error;
 pub mod fairness;
 pub mod files;
+pub mod peer;
 pub mod range;
 pub mod scheduler;
 pub mod service;

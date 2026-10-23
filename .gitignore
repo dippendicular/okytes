@@ -11,6 +11,8 @@ AGENTS.override.md
 /artifacts/
 /packaging/macos/generated-safari/
 /apps/desktop/src-tauri/third-party-notices/
+/apps/daemon/web/
+/apps/desktop/src-tauri/binaries/
 
 # Rust / Cargo
 /vendor/

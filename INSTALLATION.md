@@ -64,7 +64,70 @@ browser identifiers. Installing the desktop does not install an extension.
 The daemon runs only when you launch or register it yourself; its service
 examples live in `apps/daemon`.
 
-## Uninstall
+## Quick Download in a local browser
+
+The installed `okytes-daemon` companion serves Quick Download without an extension.
+All page assets are inside that executable; it needs no hosted site or CDN. Start
+it explicitly with an absolute profile and download folder, for example on Windows:
+
+```powershell
+.\okytes-daemon.exe --quick --bind 127.0.0.1:65432 --data-dir D:\OkytesData --downloads D:\Downloads
+.\okytes-cli.exe --daemon-url http://127.0.0.1:65432/ --token-file D:\OkytesData\daemon-admin.token quick --open
+```
+
+On Linux/macOS use `./okytes-daemon` and `./okytes-cli` with absolute Unix paths.
+The CLI prints a one-use code: enter it in the opened local page within two
+minutes. Never paste the permanent token into a webpage. Sessions last at most
+15 minutes; logout revokes them immediately. Each new or reloaded tab needs a new
+code because its independent authorization proof stays only in memory. The queue
+and downloaded bytes remain with the daemon. Bookmark the credential-free page.
+
+`--bind` controls the endpoint; existing daemon clients retain the default
+`127.0.0.1:17841`. Use `:65432` explicitly for the example above. An occupied port
+fails with instructions instead of choosing another interface or port. Quick mode
+rejects remote mode and port zero. A phone's loopback address points to the phone.
+
+Close an embedded desktop owner before starting a daemon on its profile. Attach
+the desktop and native host using `OKYTES_DAEMON_URL` and
+`OKYTES_DAEMON_TOKEN_FILE` as described in [the daemon guide](apps/daemon/README.md).
+The desktop/tray **Open Quick Download** action displays an approval code when
+attached to a Quick-enabled local daemon with a native admin credential. There is
+no automatic owner takeover or anonymous recovery route.
+
+Portable ZIPs and `.run` installations place companions in `bin`. Native bundles
+stage the companions through Tauri's external-binary packaging. On macOS inspect
+`Okytes.app/Contents/MacOS`; native package paths must be verified for the actual
+artifact. For AppImage use the matching portable tools archive or extract the
+AppImage to access its daemon; opening the desktop AppImage is not a daemon-start
+command. Do not assume an artifact contains these helpers until its release
+record confirms that build. Native bundle installation/upgrade qualification
+remains separate from source and browser tests.
+
+Background availability is opt-in: `--quick` enables the page on a foreground
+daemon and does not install a startup task. Closing a tab or attached desktop
+does not stop that separate daemon. Ctrl+C or stopping its supervisor ends
+availability; an already open page reports disconnection, while a new navigation
+may show the browser's connection error. The page cannot start a stopped process.
+Logout normally ends a foreground/per-user process unless an explicitly configured
+supervisor has different behavior.
+
+For startup, edit the existing [service templates](apps/daemon/services/README.md)
+to include `--quick --bind 127.0.0.1:65432`. Linux uses an explicitly enabled
+systemd user unit; disable/stop it before removal. macOS uses a user LaunchAgent;
+boot it out before removing its plist. Windows requires the documented external
+service wrapper/account configuration, or a user-created logon task using that
+user's profile; the console daemon is not directly an SCM service. None is silently
+registered by the installer. Stop the owner before upgrading its executable, retain
+its profile for recovery, and pair browser tabs again after restart. Do not grant
+root/LocalSystem privileges merely to keep a personal queue available.
+
+Only manually reusable HTTP/HTTPS links can be added here, up to ten per batch.
+Browser cookies, site headers and expired signed links may need the extension or
+a fresh direct link. Quick does not intercept third-party clicks, expose your LAN,
+or open/execute downloaded files. Use the desktop for native file actions.
+See the [local web threat model](docs/security/local-web-threat-model.md).
+
+## Removing Okytes
 
 Close Okytes and stop any separately registered daemon first. Use Windows
 Settings / installed apps for NSIS or MSI, the package manager for DEB/RPM,

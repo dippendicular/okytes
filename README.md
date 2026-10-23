@@ -43,7 +43,7 @@ No artificial speed limits. No trial expiry. Just a download manager that does i
 - **BitTorrent:** Magnet links, DHT, trackers, selective downloads, piece verification, and configurable seeding.
 - **FTP/FTPS/SFTP:** Browse remote directories, upload and download files, and resume transfers where supported.
 - **HLS/DASH:** Download supported unprotected media streams with quality, audio, and subtitle selection.
-- **LAN Share:** Send files and folders directly between paired devices over an encrypted local connection.
+- **LAN Share:** Send files and complete folders directly to one or more paired devices over authenticated, encrypted local connections. Transfers support receiver approval, durable resume, integrity verification, progress, and discovery with manual-address fallback. See [LAN Share](docs/LAN-SHARE.md).
 
 ### Manage
 
@@ -112,13 +112,21 @@ CLI commands and flags may evolve before the stable release.
 
 Browser extensions hand supported downloads to the native engine. When interception is unavailable, the browser can continue using its own download handling.
 
-If a link is missed, open the local Quick Download page:
+If a link is missed, use **Open Quick Download** in the attached desktop app or
+`okytes-cli quick --open` with your daemon connection configured. This opens the
+correct local address. A daemon configured on port 65432 serves:
 
 `http://127.0.0.1:65432/quick`
 
-Paste the URL and start the download using the installed Okytes engine.
+Enter the one-use approval code from the trusted desktop or CLI, paste a direct
+HTTP/HTTPS link, and download through the installed Rust engine. The page shows
+the shared queue, progress, retries, and pause/resume/cancel and priority controls.
 
-The local page requires the Okytes application or background service to be running.
+Quick Download requires the local daemon to be running with `--quick`; see the
+[setup instructions](INSTALLATION.md#quick-download-in-a-local-browser). Transfers
+continue after the tab closes while that daemon runs. Pair each new or reloaded
+tab again. Links that depend on browser cookies or expired site tokens may need
+the extension or a fresh direct URL.
 
 ## How it works
 <img width="1536" height="1024" alt="Okytes Download Manager Architecture Infographic" src="https://github.com/user-attachments/assets/f82143ed-0087-499c-81d7-5520076a53d5" />
@@ -225,7 +233,7 @@ IDM and FDM are established download managers with mature acceleration and recov
 | **Checksum handling** | SHA-256 with optional expected-hash verification | Depends on workflow | Depends on workflow |
 | **BitTorrent** | v1 torrents, magnets, DHT, selective files and seeding limits | Not a primary feature | Supported |
 | **FTP/SFTP** | Planned server transfers | FTP support | FTP support |
-| **LAN Share** | Planned encrypted peer transfers | Not a primary feature | Not a primary feature |
+| **LAN Share** | Encrypted direct file and folder transfer with pairing, receiver approval, discovery, integrity checks and durable resume | No built-in LAN transfer | No built-in LAN transfer |
 | **Automation** | CLI and local API | Command-line integration | Remote-control features |
 | **Architecture** | Shared Rust engine | Windows-focused application | Cross-platform application |
 
@@ -316,7 +324,7 @@ Okytes is dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT)
 
 For a source build, first run `node scripts/prepare-vendor.mjs`. This restores the checksum-pinned torrent dependency patches into the ignored `vendor/` directory.
 
-Installation and removal instructions are in the [installation guide](packaging/INSTALLATION.md).
+Installation and removal instructions are in the [installation guide](INSTALLATION.md).
 Release artifacts identify their architecture, signing status and installation
 verification. Software updates are checked manually from Settings; downloading,
 signature verification and installation are separate steps.

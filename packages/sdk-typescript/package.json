@@ -10,7 +10,7 @@
     "generate": "openapi-typescript ../../apps/daemon/api/openapi-v1.json -o src/schema.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "node --test tests/client.test.mjs"
+    "test": "node --test tests/client.test.mjs tests/quick.test.mjs"
   },
   "dependencies": {
     "openapi-fetch": "^0.14.0"

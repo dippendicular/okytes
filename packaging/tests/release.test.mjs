@@ -16,6 +16,50 @@ import { createHash } from "node:crypto";
 import { createRun } from "../linux/create-run.mjs";
 import { normalizeTimestamps } from "../timestamps.mjs";
 
+test("native packages stage all Quick companions with Tauri target names", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "okytes-companions-"));
+  try {
+    const binaries = join(directory, "compiled");
+    const staged = join(directory, "staged");
+    await mkdir(binaries);
+    const names = ["okytes-cli", "okytes-daemon", "okytes-native-host"];
+    for (const name of names)
+      await writeFile(join(binaries, `${name}.exe`), `synthetic-${name}`);
+    execFileSync(process.execPath, [
+      "packaging/companions.mjs",
+      binaries,
+      "x86_64-pc-windows-msvc",
+      staged,
+    ]);
+    for (const name of names)
+      assert.equal(
+        await readFile(
+          join(staged, `${name}-x86_64-pc-windows-msvc.exe`),
+          "utf8",
+        ),
+        `synthetic-${name}`,
+      );
+    const config = join(directory, "config.json");
+    execFileSync(
+      process.execPath,
+      ["packaging/configure.mjs", "windows", config],
+      {
+        env: {
+          ...process.env,
+          UPDATE_SIGNING_ENABLED: "false",
+          TAURI_SIGNING_PRIVATE_KEY: "",
+        },
+      },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(config, "utf8")).bundle.externalBin,
+      names.map((name) => `binaries/${name}`),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("self-extractor embeds the exact payload checksum and refuses replacement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "okytes-run-test-"));
   try {

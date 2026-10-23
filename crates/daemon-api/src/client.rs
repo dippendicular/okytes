@@ -21,6 +21,27 @@ fn invalid() -> EngineError {
     EngineError::Config("daemon request failed; check credentials, scope and connection".into())
 }
 impl Client {
+    /// Ask the local owner for an explicitly approved one-use browser code.
+    pub async fn quick_pair(&self) -> EngineResult<QuickPairing> {
+        if self.base.scheme() != "http"
+            || !self.base.host_str().is_some_and(|host| {
+                host.parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+            })
+        {
+            return Err(invalid());
+        }
+        let pairing: QuickPairing = self
+            .request(Method::POST, "v1/quick/pair", Some(&serde_json::json!({})))
+            .await?;
+        if pairing.url != self.base.join("quick").map_err(|_| invalid())?.as_str()
+            || pairing.code.len() != 64
+            || !pairing.code.bytes().all(|value| value.is_ascii_hexdigit())
+        {
+            return Err(invalid());
+        }
+        Ok(pairing)
+    }
     /// Plaintext endpoints must use an explicit loopback address. HTTPS retains
     /// normal certificate verification; unsafe URLs and token redirects fail.
     pub fn new(connection: Connection) -> EngineResult<Self> {

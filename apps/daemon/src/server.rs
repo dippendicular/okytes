@@ -12,6 +12,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use futures::{stream, Stream, StreamExt};
 use okytes_core::desktop::DesktopService;
 use okytes_daemon_api::contract::*;
@@ -47,15 +48,25 @@ struct Rate {
 }
 /// Shared state; disconnecting request handlers never owns engine tasks.
 pub struct Api {
+    /// Explicitly configured loopback browser surface.
+    pub quick: crate::quick::Quick,
     stopping: std::sync::atomic::AtomicBool,
     /// Real embedded queue owner used by daemon and desktop.
     pub session: Arc<Session>,
     /// Revocable credential registry.
     pub tokens: Arc<Tokens>,
+    /// Peer metadata shares the session's serialized profile writer.
+    pub peer_store: Arc<SqliteStore>,
+    /// Protected local credential; only its public certificate is exported.
+    pub peer_identity: Arc<crate::peer_identity::Identity>,
+    /// Optional standards-based LAN discovery, disabled by configuration.
+    pub discovery: tokio::sync::RwLock<Option<Arc<crate::discovery::Discovery>>>,
+    discovery_config: tokio::sync::RwLock<Option<(String, u16)>>,
     policy: Policy,
     rate: Mutex<Rate>,
     requests: Arc<Semaphore>,
     subscribers: Arc<Semaphore>,
+    peer_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 impl Api {
     /// Open the real service and separate hashed credential registry.
@@ -84,6 +95,8 @@ impl Api {
         let session = Session::open(&database, destination)
             .await
             .map_err(|_| io::Error::other("cannot open queue profile"))?;
+        let peer_store = session.profile_store();
+        let peer_identity = Arc::new(crate::peer_identity::Identity::open(directory)?);
         let tokens = Tokens::open(
             Arc::new(
                 SqliteStore::open(&database)
@@ -93,9 +106,14 @@ impl Api {
         )
         .await?;
         Ok(Arc::new(Self {
+            quick: crate::quick::Quick::default(),
             stopping: std::sync::atomic::AtomicBool::new(false),
             session,
             tokens,
+            peer_store,
+            peer_identity,
+            discovery: tokio::sync::RwLock::new(None),
+            discovery_config: tokio::sync::RwLock::new(None),
             policy,
             rate: Mutex::new(Rate {
                 since: Instant::now(),
@@ -104,16 +122,80 @@ impl Api {
             }),
             requests: Arc::new(Semaphore::new(32)),
             subscribers: Arc::new(Semaphore::new(16)),
+            peer_tasks: Mutex::new(Vec::new()),
         }))
     }
     /// Reject new requests before draining durable engine writes.
     pub async fn shutdown(&self) -> io::Result<()> {
         self.stopping
             .store(true, std::sync::atomic::Ordering::Release);
+        for task in self.peer_tasks.lock().await.drain(..) {
+            task.abort();
+        }
         self.session
             .shutdown()
             .await
             .map_err(|_| io::Error::other("queue shutdown failed"))
+    }
+
+    /// Restart locally authorized outbound transfers after process recovery.
+    pub async fn recover_peer_transfers(self: &Arc<Self>) -> io::Result<()> {
+        let outbounds = self
+            .peer_store
+            .peer_outbounds()
+            .await
+            .map_err(|_| io::Error::other("cannot read peer recovery records"))?;
+        for outbound in outbounds {
+            let request = self
+                .peer_store
+                .peer_request(outbound.request_id)
+                .await
+                .map_err(|_| io::Error::other("cannot read peer request"))?;
+            if request.is_some_and(|record| {
+                !matches!(
+                    record.state,
+                    okytes_core::peer::State::Completed
+                        | okytes_core::peer::State::Cancelled
+                        | okytes_core::peer::State::Rejected
+                        | okytes_core::peer::State::Paused
+                )
+            }) {
+                launch_outbound(self.clone(), outbound)
+                    .await
+                    .map_err(|_| io::Error::other("cannot recover peer transfer"))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn configure_peer_discovery(
+        &self,
+        name: String,
+        port: u16,
+        enabled: bool,
+    ) -> io::Result<()> {
+        *self.discovery_config.write().await = Some((name, port));
+        self.set_peer_discovery(enabled).await
+    }
+
+    async fn set_peer_discovery(&self, enabled: bool) -> io::Result<()> {
+        let mut discovery = self.discovery.write().await;
+        if enabled && discovery.is_none() {
+            let (name, port) = self
+                .discovery_config
+                .read()
+                .await
+                .clone()
+                .ok_or_else(|| io::Error::other("peer listener is not configured"))?;
+            *discovery = Some(Arc::new(crate::discovery::Discovery::start(
+                &name,
+                port,
+                self.peer_identity.fingerprint().as_str(),
+            )?));
+        } else if !enabled {
+            *discovery = None;
+        }
+        Ok(())
     }
 }
 fn error(status: StatusCode, code: &str) -> Response {
@@ -154,6 +236,9 @@ async fn destination(api: &Api, scope: Scope, value: Option<&str>) -> Result<(),
 }
 fn required(method: &Method, path: &str) -> Scope {
     if path.starts_with("/v1/tokens")
+        || path.starts_with("/v1/peers/trust")
+        || path == "/v1/peers/identity"
+        || path == "/v1/quick/pair"
         || (*method == Method::PUT && matches!(path, "/v1/settings" | "/v1/config"))
     {
         Scope::Admin
@@ -186,11 +271,10 @@ async fn guard(State(api): State<Arc<Api>>, mut request: Request, next: Next) ->
         return error(StatusCode::FORBIDDEN, "invalid_host");
     }
     if let Some(origin) = request.headers().get("origin") {
-        if !origin
-            .to_str()
-            .ok()
-            .is_some_and(|origin| api.policy.origins.iter().any(|allowed| allowed == origin))
-        {
+        if !origin.to_str().ok().is_some_and(|origin| {
+            api.policy.origins.iter().any(|allowed| allowed == origin)
+                || api.quick.origin_allowed(origin)
+        }) {
             return error(StatusCode::FORBIDDEN, "invalid_origin");
         }
     }
@@ -206,6 +290,23 @@ async fn guard(State(api): State<Arc<Api>>, mut request: Request, next: Next) ->
     };
     if !allowed {
         return error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    }
+    if request.uri().path() == "/quick" || request.uri().path().starts_with("/quick/") {
+        return crate::quick::public(&api, request).await;
+    }
+    if !request.headers().contains_key("authorization") && request.headers().contains_key("cookie")
+    {
+        let Some((token, _)) = api.quick.authenticate(request.headers(), true).await else {
+            return error(StatusCode::UNAUTHORIZED, "unauthorized");
+        };
+        request = match crate::quick::browser_request(request).await {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        let Ok(value) = format!("Bearer {token}").parse() else {
+            return error(StatusCode::UNAUTHORIZED, "unauthorized");
+        };
+        request.headers_mut().insert("authorization", value);
     }
     let Some(token) = request
         .headers()
@@ -275,6 +376,9 @@ async fn guard(State(api): State<Arc<Api>>, mut request: Request, next: Next) ->
 /// Construct the complete authenticated router.
 pub fn router(api: Arc<Api>) -> Router {
     Router::new()
+        .route("/quick", get(|| async { StatusCode::NOT_FOUND }))
+        .route("/quick/{*path}", axum::routing::any(|| async { StatusCode::NOT_FOUND }))
+        .route("/v1/quick/pair", post(quick_pair))
         .route("/v1/jobs", get(list).post(add))
         .route("/v1/torrents", post(add_torrent))
         .route("/v1/torrents/inspect", post(inspect_torrent))
@@ -293,11 +397,530 @@ pub fn router(api: Arc<Api>) -> Router {
         .route("/v1/events", get(events))
         .route("/v1/tokens", get(tokens).post(issue))
         .route("/v1/tokens/{id}", axum::routing::delete(revoke))
+        .route("/v1/peers/identity", get(peer_identity))
+        .route("/v1/peers/trust", get(peer_trusts).post(peer_approve))
+        .route("/v1/peers/trust/{id}/{revision}", axum::routing::delete(peer_revoke))
+        .route("/v1/peers/requests", get(peer_requests))
+        .route("/v1/peers/send", post(peer_send))
+        .route("/v1/peers/discovery", get(peer_devices))
+        .route(
+            "/v1/peers/discovery/settings",
+            get(peer_discovery_setting).post(peer_set_discovery),
+        )
+        .route("/v1/peers/requests/{id}/decision", post(peer_decide))
         .route("/v1/openapi.json", get(spec))
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not_found") })
         .layer(DefaultBodyLimit::max(1048576))
         .layer(middleware::from_fn_with_state(api.clone(), guard))
+        .layer(middleware::from_fn(|request: Request, next: Next| async move {
+            crate::quick::secure(next.run(request).await)
+        }))
         .with_state(api)
+}
+
+#[utoipa::path(get,path="/v1/peers/identity",responses((status=200,body=PeerIdentity)),security(("bearer"=[])))]
+async fn peer_identity(State(api): State<Arc<Api>>) -> Json<PeerIdentity> {
+    Json(PeerIdentity {
+        fingerprint: api.peer_identity.fingerprint().as_str().to_owned(),
+        certificate: BASE64.encode(api.peer_identity.certificate()),
+    })
+}
+
+#[utoipa::path(get,path="/v1/peers/trust",responses((status=200,body=[PeerTrust])),security(("bearer"=[])))]
+async fn peer_trusts(State(api): State<Arc<Api>>) -> Result<Json<Vec<PeerTrust>>, Response> {
+    api.peer_store
+        .peer_trusts()
+        .await
+        .map(|records| {
+            Json(
+                records
+                    .into_iter()
+                    .map(|record| PeerTrust {
+                        id: record.id,
+                        fingerprint: record.fingerprint.as_str().to_owned(),
+                        revision: record.revision,
+                        revoked: record.revoked,
+                    })
+                    .collect(),
+            )
+        })
+        .map_err(rejection)
+}
+
+#[utoipa::path(post,path="/v1/peers/trust",request_body=PeerApproval,responses((status=200,body=PeerTrust)),security(("bearer"=[])))]
+async fn peer_approve(
+    State(api): State<Arc<Api>>,
+    Json(input): Json<PeerApproval>,
+) -> Result<Json<PeerTrust>, Response> {
+    let certificate = BASE64
+        .decode(input.certificate.as_bytes())
+        .map_err(rejection)?;
+    let fingerprint =
+        okytes_core::peer::Hash::try_from(input.confirmed_fingerprint).map_err(rejection)?;
+    crate::peer_identity::ApprovedPeer::confirm(&certificate, &fingerprint).map_err(rejection)?;
+    api.peer_store
+        .peer_approve(input.id, certificate, fingerprint, input.expected_revision)
+        .await
+        .map(|record| {
+            Json(PeerTrust {
+                id: record.id,
+                fingerprint: record.fingerprint.as_str().to_owned(),
+                revision: record.revision,
+                revoked: record.revoked,
+            })
+        })
+        .map_err(rejection)
+}
+
+#[utoipa::path(delete,path="/v1/peers/trust/{id}/{revision}",params(("id"=uuid::Uuid,Path),("revision"=u64,Path)),responses((status=200,body=PeerTrust)),security(("bearer"=[])))]
+async fn peer_revoke(
+    State(api): State<Arc<Api>>,
+    Path((id, revision)): Path<(String, u64)>,
+) -> Result<Json<PeerTrust>, Response> {
+    let id = uuid::Uuid::parse_str(&id).map_err(rejection)?;
+    api.peer_store
+        .peer_revoke(id, revision)
+        .await
+        .map(|record| {
+            Json(PeerTrust {
+                id: record.id,
+                fingerprint: record.fingerprint.as_str().to_owned(),
+                revision: record.revision,
+                revoked: record.revoked,
+            })
+        })
+        .map_err(rejection)
+}
+
+#[utoipa::path(get,path="/v1/peers/requests",params(("offset"=Option<u32>,Query)),responses((status=200,body=[PeerRequest])),security(("bearer"=[])))]
+async fn peer_requests(
+    State(api): State<Arc<Api>>,
+    Query(page): Query<Page>,
+) -> Result<Json<Vec<PeerRequest>>, Response> {
+    let records = api
+        .peer_store
+        .peer_requests(page.offset as usize)
+        .await
+        .map_err(rejection)?;
+    let mut requests = Vec::with_capacity(records.len());
+    for record in records {
+        requests.push(peer_request_view(&api, record).await?);
+    }
+    Ok(Json(requests))
+}
+
+async fn peer_request_view(
+    api: &Api,
+    record: okytes_persistence::peer::Request,
+) -> Result<PeerRequest, Response> {
+    let offsets = api
+        .peer_store
+        .peer_offsets(record.id, record.peer.clone())
+        .await
+        .map_err(rejection)?;
+    let total = record.manifest.validate().map_err(rejection)?;
+    let failure = api
+        .peer_store
+        .peer_failure(record.id)
+        .await
+        .map_err(rejection)?;
+    let destination = if record.direction == okytes_core::peer::Direction::Inbound {
+        api.peer_store
+            .peer_inbound_destination(record.id)
+            .await
+            .map_err(rejection)?
+    } else {
+        None
+    };
+    let mut transferred = 0u64;
+    let mut files_completed = 0u32;
+    for entry in &record.manifest.entries {
+        if let okytes_core::peer::Entry::File { path, size, .. } = entry {
+            let offset = offsets.get(path).copied().unwrap_or_default().min(*size);
+            transferred = transferred.saturating_add(offset);
+            files_completed += u32::from(offset == *size);
+        }
+    }
+    Ok(PeerRequest {
+        id: record.id,
+        peer_fingerprint: record.peer.as_str().to_owned(),
+        direction: record.direction,
+        manifest: record.manifest,
+        state: record.state,
+        revision: record.revision,
+        bytes: transferred.min(total),
+        total,
+        files_completed,
+        failure,
+        destination,
+    })
+}
+
+#[utoipa::path(post,path="/v1/peers/send",request_body=PeerSend,responses((status=200,body=String)),security(("bearer"=[])))]
+async fn peer_send(
+    State(api): State<Arc<Api>>,
+    Json(input): Json<PeerSend>,
+) -> Result<Json<String>, Response> {
+    if input.paths.is_empty() || input.paths.len() > 32 {
+        return Err(rejection("invalid peer source selection"));
+    }
+    let address: std::net::SocketAddr = input.address.parse().map_err(rejection)?;
+    let paths = input
+        .paths
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    if paths.iter().any(|path| !path.is_absolute()) {
+        return Err(rejection("peer source paths must be absolute"));
+    }
+    let trust = api
+        .peer_store
+        .peer_trust(input.peer_id)
+        .await
+        .map_err(rejection)?
+        .filter(|record| !record.revoked)
+        .ok_or_else(|| rejection("peer is not trusted"))?;
+    let source_paths = paths.clone();
+    let source =
+        tokio::task::spawn_blocking(move || crate::peer_transfer::Source::open(&source_paths))
+            .await
+            .map_err(rejection)?
+            .map_err(rejection)?;
+    let request_id = uuid::Uuid::new_v4();
+    let created = api
+        .peer_store
+        .peer_offer(
+            request_id,
+            trust.fingerprint.clone(),
+            okytes_core::peer::Direction::Outbound,
+            source.manifest().clone(),
+        )
+        .await
+        .map_err(rejection)?;
+    api.peer_store
+        .peer_transition(
+            request_id,
+            trust.fingerprint.clone(),
+            created.revision,
+            okytes_core::peer::State::AwaitingApproval,
+        )
+        .await
+        .map_err(rejection)?;
+    let outbound = okytes_persistence::peer::Outbound {
+        request_id,
+        peer_id: input.peer_id,
+        address: address.to_string(),
+        paths: paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+    };
+    api.peer_store
+        .peer_save_outbound(outbound.clone())
+        .await
+        .map_err(rejection)?;
+    launch_outbound(api.clone(), outbound).await?;
+    Ok(Json(request_id.to_string()))
+}
+
+async fn launch_outbound(
+    api: Arc<Api>,
+    outbound: okytes_persistence::peer::Outbound,
+) -> Result<(), Response> {
+    let address: std::net::SocketAddr = outbound.address.parse().map_err(rejection)?;
+    let paths = outbound
+        .paths
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    let source = Arc::new(
+        tokio::task::spawn_blocking(move || crate::peer_transfer::Source::open(&paths))
+            .await
+            .map_err(rejection)?
+            .map_err(rejection)?,
+    );
+    let request = api
+        .peer_store
+        .peer_request(outbound.request_id)
+        .await
+        .map_err(rejection)?
+        .ok_or_else(|| rejection("peer request not found"))?;
+    if source.manifest() != &request.manifest {
+        let _ = api
+            .peer_store
+            .peer_set_failure(
+                outbound.request_id,
+                "The selected source changed after the transfer was created.".to_owned(),
+            )
+            .await;
+        let _ = api
+            .peer_store
+            .peer_transition(
+                request.id,
+                request.peer.clone(),
+                request.revision,
+                okytes_core::peer::State::Failed,
+            )
+            .await;
+        return Err(rejection("outbound source changed since it was offered"));
+    }
+    let request_id = outbound.request_id;
+    let peer_id = outbound.peer_id;
+    let fingerprint = request.peer;
+    let task_api = api.clone();
+    let task = tokio::spawn(async move {
+        let deadline = Instant::now() + Duration::from_secs(15 * 60);
+        loop {
+            let current = match task_api.peer_store.peer_request(request_id).await {
+                Ok(Some(record)) => record,
+                _ => break,
+            };
+            if matches!(
+                current.state,
+                okytes_core::peer::State::Cancelled
+                    | okytes_core::peer::State::Paused
+                    | okytes_core::peer::State::Rejected
+                    | okytes_core::peer::State::Completed
+            ) {
+                break;
+            }
+            let tls = match task_api
+                .peer_identity
+                .client_for(&task_api.peer_store, peer_id)
+                .await
+            {
+                Ok(config) => config,
+                Err(_) => break,
+            };
+            match crate::peer_session::send_managed(
+                address,
+                tls,
+                &source,
+                request_id,
+                &task_api.peer_store,
+                fingerprint.clone(),
+            )
+            .await
+            {
+                Ok(()) => {
+                    let _ = task_api.peer_store.peer_remove_outbound(request_id).await;
+                    break;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_secs(2)).await
+                }
+                Err(error) => {
+                    let _ = task_api
+                        .peer_store
+                        .peer_set_failure(
+                            request_id,
+                            format!("Peer connection stopped: {}", error.kind()),
+                        )
+                        .await;
+                    if let Ok(Some(current)) = task_api.peer_store.peer_request(request_id).await {
+                        if matches!(
+                            current.state,
+                            okytes_core::peer::State::Negotiating
+                                | okytes_core::peer::State::Transferring
+                                | okytes_core::peer::State::Retrying
+                        ) {
+                            let _ = task_api
+                                .peer_store
+                                .peer_transition(
+                                    request_id,
+                                    current.peer,
+                                    current.revision,
+                                    okytes_core::peer::State::Interrupted,
+                                )
+                                .await;
+                        }
+                    }
+                    tracing::warn!(%request_id,%error,"outbound peer transfer stopped");
+                    break;
+                }
+            }
+        }
+    });
+    let mut tasks = api.peer_tasks.lock().await;
+    tasks.retain(|task| !task.is_finished());
+    if tasks.len() >= 64 {
+        task.abort();
+        return Err(error(StatusCode::TOO_MANY_REQUESTS, "busy"));
+    }
+    tasks.push(task);
+    Ok(())
+}
+
+#[utoipa::path(get,path="/v1/peers/discovery",responses((status=200,body=[PeerDevice])),security(("bearer"=[])))]
+async fn peer_devices(State(api): State<Arc<Api>>) -> Result<Json<Vec<PeerDevice>>, Response> {
+    let discovery = api.discovery.read().await.clone();
+    let Some(discovery) = discovery else {
+        return Ok(Json(Vec::new()));
+    };
+    let trusted = api
+        .peer_store
+        .peer_active_trusts()
+        .await
+        .map_err(rejection)?
+        .into_iter()
+        .map(|record| (record.fingerprint.as_str().to_owned(), record.id))
+        .collect::<std::collections::HashMap<_, _>>();
+    Ok(Json(
+        discovery
+            .devices()
+            .await
+            .into_iter()
+            .map(|device| PeerDevice {
+                peer_id: trusted.get(&device.fingerprint).copied(),
+                trusted: trusted.contains_key(&device.fingerprint),
+                fullname: device.fullname,
+                name: device.name,
+                os: device.os,
+                protocol: device.protocol,
+                fingerprint: device.fingerprint,
+                addresses: device.addresses,
+                port: device.port,
+            })
+            .collect(),
+    ))
+}
+
+#[utoipa::path(get,path="/v1/peers/discovery/settings",responses((status=200,body=PeerDiscoverySetting)),security(("bearer"=[])))]
+async fn peer_discovery_setting(State(api): State<Arc<Api>>) -> Json<PeerDiscoverySetting> {
+    Json(PeerDiscoverySetting {
+        enabled: api.discovery.read().await.is_some(),
+    })
+}
+
+#[utoipa::path(post,path="/v1/peers/discovery/settings",request_body=PeerDiscoverySetting,responses((status=200,body=PeerDiscoverySetting)),security(("bearer"=[])))]
+async fn peer_set_discovery(
+    State(api): State<Arc<Api>>,
+    Json(input): Json<PeerDiscoverySetting>,
+) -> Result<Json<PeerDiscoverySetting>, Response> {
+    api.set_peer_discovery(input.enabled)
+        .await
+        .map_err(rejection)?;
+    Ok(Json(input))
+}
+
+#[utoipa::path(post,path="/v1/peers/requests/{id}/decision",params(("id"=uuid::Uuid,Path)),request_body=PeerDecision,responses((status=200,body=PeerRequest)),security(("bearer"=[])))]
+async fn peer_decide(
+    State(api): State<Arc<Api>>,
+    Path(id): Path<String>,
+    Json(input): Json<PeerDecision>,
+) -> Result<Json<PeerRequest>, Response> {
+    let id = uuid::Uuid::parse_str(&id).map_err(rejection)?;
+    let current = api
+        .peer_store
+        .peer_request(id)
+        .await
+        .map_err(rejection)?
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, "not_found"))?;
+    if current.revision != input.expected_revision {
+        return Err(error(StatusCode::CONFLICT, "revision_conflict"));
+    }
+    if matches!(&input.action, PeerAction::Accept)
+        && current.direction == okytes_core::peer::Direction::Inbound
+    {
+        let selected = match input.destination.as_deref() {
+            Some(value) => std::path::PathBuf::from(value),
+            None => std::path::PathBuf::from(
+                api.session.settings().await.map_err(rejection)?.destination,
+            ),
+        };
+        if !selected.is_absolute() {
+            return Err(rejection("peer destination must be absolute"));
+        }
+        tokio::fs::create_dir_all(&selected)
+            .await
+            .map_err(rejection)?;
+        api.peer_store
+            .peer_set_inbound_destination(id, selected.to_string_lossy().into_owned())
+            .await
+            .map_err(rejection)?;
+    }
+    let retrying = matches!(&input.action, PeerAction::Retry);
+    let record = match input.action {
+        PeerAction::Accept => {
+            api.peer_store
+                .peer_transition(
+                    id,
+                    current.peer.clone(),
+                    current.revision,
+                    okytes_core::peer::State::Negotiating,
+                )
+                .await
+        }
+        PeerAction::Reject => {
+            api.peer_store
+                .peer_transition(
+                    id,
+                    current.peer.clone(),
+                    current.revision,
+                    okytes_core::peer::State::Rejected,
+                )
+                .await
+        }
+        PeerAction::Pause => {
+            api.peer_store
+                .peer_transition(
+                    id,
+                    current.peer.clone(),
+                    current.revision,
+                    okytes_core::peer::State::Paused,
+                )
+                .await
+        }
+        PeerAction::Cancel => {
+            api.peer_store
+                .peer_transition(
+                    id,
+                    current.peer.clone(),
+                    current.revision,
+                    okytes_core::peer::State::Cancelled,
+                )
+                .await
+        }
+        PeerAction::Retry => {
+            let retry = api
+                .peer_store
+                .peer_transition(
+                    id,
+                    current.peer.clone(),
+                    current.revision,
+                    okytes_core::peer::State::Retrying,
+                )
+                .await
+                .map_err(rejection)?;
+            api.peer_store
+                .peer_transition(
+                    id,
+                    current.peer.clone(),
+                    retry.revision,
+                    okytes_core::peer::State::Negotiating,
+                )
+                .await
+        }
+    }
+    .map_err(rejection)?;
+    if retrying && record.direction == okytes_core::peer::Direction::Outbound {
+        let outbound = api
+            .peer_store
+            .peer_outbounds()
+            .await
+            .map_err(rejection)?
+            .into_iter()
+            .find(|outbound| outbound.request_id == id)
+            .ok_or_else(|| rejection("outbound recovery record not found"))?;
+        launch_outbound(api.clone(), outbound).await?;
+    }
+    peer_request_view(&api, record).await.map(Json)
+}
+#[utoipa::path(post,path="/v1/quick/pair",responses((status=200,body=crate::quick::Pairing)),security(("bearer"=[])))]
+async fn quick_pair(State(api): State<Arc<Api>>) -> Result<Json<crate::quick::Pairing>, Response> {
+    api.quick.pair().await.map(Json)
 }
 #[derive(Deserialize)]
 struct Page {
@@ -308,12 +931,18 @@ struct Page {
 async fn list(
     State(api): State<Arc<Api>>,
     Query(page): Query<Page>,
+    browser: Option<axum::Extension<crate::quick::BrowserRequest>>,
 ) -> Result<Json<Snapshot>, Response> {
-    api.session
-        .list(page.offset)
-        .await
-        .map(Json)
-        .map_err(rejection)
+    let mut snapshot = api.session.list(page.offset).await.map_err(rejection)?;
+    if browser.is_some() {
+        for job in &mut snapshot.jobs {
+            job.url.clear();
+            job.error = None;
+            job.etag = None;
+            job.segments.clear();
+        }
+    }
+    Ok(Json(snapshot))
 }
 #[utoipa::path(post,path="/v1/jobs",request_body=AddInput,responses((status=200,body=Vec<String>)),security(("bearer"=[])))]
 async fn add(
@@ -322,7 +951,13 @@ async fn add(
     Json(input): Json<AddInput>,
 ) -> Result<Json<Vec<String>>, Response> {
     destination(&api, info.scope, input.destination.as_deref()).await?;
-    api.session.add(input).await.map(Json).map_err(rejection)
+    api.session.add(input).await.map(Json).map_err(|cause| {
+        if cause.to_string().contains("duplicate") {
+            error(StatusCode::CONFLICT, "duplicate_url")
+        } else {
+            rejection(cause)
+        }
+    })
 }
 #[utoipa::path(post,path="/v1/submit",request_body=Submit,responses((status=200,body=String)),security(("bearer"=[])))]
 async fn submit(
@@ -382,8 +1017,19 @@ async fn set_config(
         .map_err(rejection)
 }
 #[utoipa::path(get,path="/v1/jobs/{id}",params(("id"=String,Path)),responses((status=200,body=Job)),security(("bearer"=[])))]
-async fn job(State(api): State<Arc<Api>>, Path(id): Path<String>) -> Result<Json<Job>, Response> {
-    api.session.get(id).await.map(Json).map_err(rejection)
+async fn job(
+    State(api): State<Arc<Api>>,
+    Path(id): Path<String>,
+    browser: Option<axum::Extension<crate::quick::BrowserRequest>>,
+) -> Result<Json<Job>, Response> {
+    let mut job = api.session.get(id).await.map_err(rejection)?;
+    if browser.is_some() {
+        job.url.clear();
+        job.error = None;
+        job.etag = None;
+        job.segments.clear();
+    }
+    Ok(Json(job))
 }
 #[utoipa::path(post,path="/v1/jobs/{id}/control",params(("id"=String,Path)),request_body=Action,responses((status=200,body=())),security(("bearer"=[])))]
 async fn control(
@@ -447,6 +1093,7 @@ async fn revoke(
 async fn events(
     State(api): State<Arc<Api>>,
     axum::Extension(info): axum::Extension<TokenInfo>,
+    browser: Option<axum::Extension<crate::quick::BrowserRequest>>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, Response> {
     let permit = api
         .subscribers
@@ -454,11 +1101,14 @@ async fn events(
         .try_acquire_owned()
         .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, "subscriber_limit"))?;
     let receiver = api.session.subscribe().await.map_err(rejection)?;
-    let stream = updates(receiver, permit, api, info.id).filter_map(|update| async move {
-        serde_json::to_string(&update)
-            .ok()
-            .map(|value| Ok(Event::default().data(value)))
-    });
+    let browser = browser.is_some();
+    let stream =
+        updates(receiver, permit, api, info.id, browser).filter_map(move |update| async move {
+            let update = if browser { Update::Resync } else { update };
+            serde_json::to_string(&update)
+                .ok()
+                .map(|value| Ok(Event::default().data(value)))
+        });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10))))
 }
 fn updates(
@@ -466,16 +1116,18 @@ fn updates(
     permit: tokio::sync::OwnedSemaphorePermit,
     api: Arc<Api>,
     id: String,
+    browser: bool,
 ) -> impl Stream<Item = Update> {
     stream::unfold(
         (receiver, permit, true, api, id),
-        |(mut receiver, permit, initial, api, id)| async move {
+        move |(mut receiver, permit, initial, api, id)| async move {
             let update = if initial {
                 Update::Resync
             } else {
                 loop {
                     if api.stopping.load(std::sync::atomic::Ordering::Acquire)
                         || !api.tokens.active(&id).await
+                        || (browser && !api.quick.active(&id).await)
                     {
                         return None;
                     }
@@ -494,7 +1146,7 @@ async fn spec() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi())
 }
 #[derive(OpenApi)]
-#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(inspect_media,authorize_file,list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,records,record,config,set_config,add_torrent,inspect_torrent,torrent),components(schemas(Update,ApiError)),modifiers(&Security))]
+#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(quick_pair,inspect_media,authorize_file,list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,records,record,config,set_config,add_torrent,inspect_torrent,torrent,peer_identity,peer_trusts,peer_approve,peer_revoke,peer_requests,peer_send,peer_devices,peer_discovery_setting,peer_set_discovery,peer_decide),components(schemas(Update,ApiError)),modifiers(&Security))]
 struct Contract;
 struct Security;
 impl utoipa::Modify for Security {
@@ -606,7 +1258,7 @@ mod tests {
         .unwrap();
         let id = api.tokens.list().await[0].id.clone();
         let permit = api.subscribers.clone().acquire_owned().await.unwrap();
-        let stream = updates(receiver, permit, api, id);
+        let stream = updates(receiver, permit, api, id, false);
         futures::pin_mut!(stream);
         // Initial synchronization plus another Resync caused by actual receiver
         // lag. Event serialization is compared directly to the production type.

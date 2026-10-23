@@ -1,0 +1,161 @@
+:root {
+  color-scheme: light dark;
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  color: #192938;
+  background: #f1f5f9;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 880px;
+  margin: auto;
+  padding: 24px;
+}
+header,
+section,
+form,
+footer {
+  margin-bottom: 24px;
+}
+header img {
+  max-width: 80%;
+  height: auto;
+}
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+}
+form,
+section {
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #8c9cac;
+  border-radius: 12px;
+}
+label {
+  display: block;
+  margin: 12px 0 6px;
+}
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+input:not([type="checkbox"]),
+textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #64748b;
+  border-radius: 6px;
+  background: #fff;
+  color: #192938;
+}
+button,
+select {
+  padding: 9px 14px;
+  margin: 6px 8px 6px 0;
+  border: 1px solid #64748b;
+  border-radius: 6px;
+  background: #fff;
+  color: #192938;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+button.primary {
+  background: #075985;
+  color: #fff;
+  border-color: #075985;
+}
+:focus-visible {
+  outline: 3px solid #a44300;
+  outline-offset: 3px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.alert {
+  border-left: 4px solid #a44300;
+  padding: 12px;
+  background: #fff2dd;
+  color: #552200;
+}
+ul {
+  list-style: none;
+  padding: 0;
+}
+li {
+  padding: 16px 0;
+  border-bottom: 1px solid #8c9cac;
+  overflow-wrap: anywhere;
+}
+progress {
+  width: 100%;
+  accent-color: #075985;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+footer {
+  color: #394b5b;
+  font-size: 0.9rem;
+}
+@media (max-width: 480px) {
+  main {
+    padding: 12px;
+  }
+  form,
+  section {
+    padding: 14px;
+  }
+  .controls button {
+    width: 100%;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f1f5f9;
+    background: #101a24;
+  }
+  form,
+  section {
+    background: #182635;
+  }
+  input:not([type="checkbox"]),
+  textarea,
+  button,
+  select {
+    background: #101a24;
+    color: #f1f5f9;
+  }
+  footer {
+    color: #c7d5e2;
+  }
+  :focus-visible {
+    outline-color: #ffb765;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

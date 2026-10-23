@@ -1,6 +1,9 @@
 //! SQLite WAL checkpoint store. A bounded mailbox serializes transactions on
 //! one dedicated writer thread; acknowledgements follow FULL synchronous commit.
 pub mod files;
+pub mod peer;
+#[cfg(test)]
+mod tests;
 
 use okytes_core::{
     engine::JobStore,
@@ -63,7 +66,13 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
             if bytes > total || total > 64 * 1024 * 1024 * 1024 {
                 return Err(db("invalid torrent progress"));
             }
-            let text: String = conn
+            // An independent controller may use another writer connection.
+            // Reserve the write lock before reading its state, so a later
+            // progress update cannot resurrect a paused/cancelled job.
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(db)?;
+            let text: String = tx
                 .query_row(
                     "SELECT record FROM jobs WHERE id=?1",
                     [id.to_string()],
@@ -77,7 +86,8 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
             job.bytes_downloaded = bytes;
             job.total_size = Some(total);
             job.updated_at = chrono::Utc::now();
-            save_job(conn, &job)
+            save_job(&tx, &job)?;
+            tx.commit().map_err(db)
         })
     }
     /// Atomically add an opaque protocol descriptor and its generic job record.
@@ -305,7 +315,13 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
                 else if version!=1 {return Err(PersistenceError::Migration(format!("unsupported schema version {version}")).into());}
                 conn.execute_batch("CREATE INDEX IF NOT EXISTS jobs_runnable ON jobs(priority DESC) WHERE state IN ('queued','probing','downloading','verifying');
                     CREATE TABLE IF NOT EXISTS torrent_jobs(job_id TEXT PRIMARY KEY REFERENCES jobs(id),descriptor TEXT NOT NULL,metadata BLOB NOT NULL,upload_reserved INTEGER NOT NULL DEFAULT 0);
-                    CREATE TABLE IF NOT EXISTS torrent_pieces(job_id TEXT NOT NULL REFERENCES jobs(id),piece INTEGER NOT NULL,PRIMARY KEY(job_id,piece));").map_err(db)?;
+                    CREATE TABLE IF NOT EXISTS torrent_pieces(job_id TEXT NOT NULL REFERENCES jobs(id),piece INTEGER NOT NULL,PRIMARY KEY(job_id,piece));
+                    CREATE TABLE IF NOT EXISTS peer_requests(id TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(length(CAST(record AS BLOB))<=1048576));
+                    CREATE TABLE IF NOT EXISTS peer_progress(request_id TEXT NOT NULL,path TEXT NOT NULL,offset INTEGER NOT NULL,PRIMARY KEY(request_id,path));
+                    CREATE TABLE IF NOT EXISTS peer_outbound(request_id TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(length(CAST(record AS BLOB))<=32768));
+                    CREATE TABLE IF NOT EXISTS peer_inbound(request_id TEXT PRIMARY KEY,destination TEXT NOT NULL CHECK(length(CAST(destination AS BLOB))<=4096));
+                    CREATE TABLE IF NOT EXISTS peer_failure(request_id TEXT PRIMARY KEY,message TEXT NOT NULL CHECK(length(CAST(message AS BLOB))<=512));
+                    CREATE TABLE IF NOT EXISTS peer_trust(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,certificate BLOB NOT NULL CHECK(length(certificate)<=4096),revision INTEGER NOT NULL,revoked INTEGER NOT NULL);").map_err(db)?;
                 Ok(conn)
             })();
             match conn {

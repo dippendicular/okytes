@@ -5,6 +5,41 @@ import type { Job } from "../../../crates/core/bindings/Job";
 import type { Settings } from "../../../crates/core/bindings/Settings";
 import type { Snapshot } from "../../../crates/core/bindings/Snapshot";
 export type { Action, AddInput, Job, Settings, Snapshot };
+export type PeerDevice = {
+  peer_id: string | null;
+  fullname: string;
+  name: string;
+  os: string;
+  protocol: number;
+  fingerprint: string;
+  addresses: string[];
+  port: number;
+  trusted: boolean;
+};
+export type PeerRequest = {
+  id: string;
+  peer_fingerprint: string;
+  direction: "inbound" | "outbound";
+  manifest: {
+    entries: Array<
+      | { kind: "file"; path: string; size: number; sha256: string }
+      | { kind: "directory"; path: string }
+    >;
+  };
+  state: string;
+  revision: number;
+  bytes: number;
+  total: number;
+  files_completed: number;
+  failure: string | null;
+  destination: string | null;
+};
+export type PeerTrust = {
+  id: string;
+  fingerprint: string;
+  revision: number;
+  revoked: boolean;
+};
 export const api = {
   inspectMedia: (url: string) =>
     invoke<import("../../../crates/core/bindings/MediaChoice").MediaChoice[]>(
@@ -49,6 +84,35 @@ export const api = {
   settings: () => invoke<Settings>("settings"),
   setSettings: (settings: Settings) =>
     invoke<void>("set_settings", { settings }),
+  peerIdentity: () =>
+    invoke<{ fingerprint: string; certificate: string }>("peer_identity"),
+  peerDiscover: () => invoke<PeerDevice[]>("peer_discover"),
+  peerDiscoverySetting: () => invoke<{ enabled: boolean }>("peer_discovery_setting"),
+  setPeerDiscovery: (enabled: boolean) =>
+    invoke<{ enabled: boolean }>("set_peer_discovery", { enabled }),
+  peerRequests: () => invoke<PeerRequest[]>("peer_requests"),
+  peerTrust: (input: {
+    id: string;
+    certificate: string;
+    confirmed_fingerprint: string;
+    expected_revision: number | null;
+  }) => invoke("peer_trust", { input }),
+  peerTrusts: () => invoke<PeerTrust[]>("peer_trusts"),
+  peerRevoke: (id: string, revision: number) =>
+    invoke<PeerTrust>("peer_revoke", { id, revision }),
+  openPeerDestination: (path: string) => invoke<void>("open_peer_destination", { path }),
+  peerSend: (input: { peer_id: string; address: string; paths: string[] }) =>
+    invoke<string>("peer_send", { input }),
+  peerDecide: (
+    id: string,
+    expected_revision: number,
+    action: "accept" | "reject" | "pause" | "retry" | "cancel",
+    destination: string | null = null,
+  ) =>
+    invoke<PeerRequest>("peer_decide", {
+      id,
+      input: { expected_revision, action, destination },
+    }),
 };
 
 export function category(name: string): string {

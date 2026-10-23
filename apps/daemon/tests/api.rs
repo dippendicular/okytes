@@ -1,5 +1,8 @@
 use okytes_core::desktop::DesktopService;
-use okytes_daemon_api::contract::{Action, IssueToken, IssuedToken, Scope, Submit};
+use okytes_daemon_api::contract::{
+    Action, IssueToken, IssuedToken, PeerAction, PeerApproval, PeerDecision, PeerIdentity,
+    PeerRequest, PeerTrust, Scope, Submit,
+};
 use okytes_test_support::server::{ServerConfig, TestServer};
 use reqwest::{Method, StatusCode};
 use sha2::{Digest, Sha256};
@@ -59,6 +62,16 @@ async fn every_endpoint_rejects_missing_credentials_and_enforces_all_scopes() {
         (Method::GET, "v1/tokens", Scope::Admin),
         (Method::POST, "v1/tokens", Scope::Admin),
         (Method::DELETE, "v1/tokens/not-a-token", Scope::Admin),
+        (Method::GET, "v1/peers/identity", Scope::Admin),
+        (Method::GET, "v1/peers/trust", Scope::Admin),
+        (Method::POST, "v1/peers/trust", Scope::Admin),
+        (Method::DELETE, "v1/peers/trust/not-a-peer/0", Scope::Admin),
+        (Method::GET, "v1/peers/requests", Scope::ReadOnly),
+        (
+            Method::POST,
+            "v1/peers/requests/not-a-request/decision",
+            Scope::Control,
+        ),
         (Method::GET, "v1/openapi.json", Scope::ReadOnly),
         (Method::GET, "not-a-route", Scope::ReadOnly),
     ];
@@ -93,6 +106,102 @@ async fn every_endpoint_rejects_missing_credentials_and_enforces_all_scopes() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn native_peer_api_requires_fingerprint_confirmation_and_revisioned_decisions() {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+    use okytes_core::peer::{Direction, Entry, Hash, Manifest, State};
+    let f = Fixture::new().await;
+    let admin = f.client(f.token.clone());
+    let identity: PeerIdentity = admin
+        .request(Method::GET, "v1/peers/identity", None::<&()>)
+        .await
+        .unwrap();
+    assert_eq!(
+        Hash::digest(&BASE64.decode(&identity.certificate).unwrap()).as_str(),
+        identity.fingerprint
+    );
+
+    let remote_dir = f.root.path().join("remote-device");
+    std::fs::create_dir_all(&remote_dir).unwrap();
+    let remote = okytes_daemon::peer_identity::Identity::open(&remote_dir).unwrap();
+    let slot = uuid::Uuid::new_v4();
+    let wrong = PeerApproval {
+        id: slot,
+        certificate: BASE64.encode(remote.certificate()),
+        confirmed_fingerprint: Hash::digest(b"wrong").as_str().to_owned(),
+        expected_revision: None,
+    };
+    let wrong_result: Result<PeerTrust, _> = admin
+        .request(Method::POST, "v1/peers/trust", Some(&wrong))
+        .await;
+    assert!(wrong_result.is_err());
+    let approval = PeerApproval {
+        confirmed_fingerprint: remote.fingerprint().as_str().to_owned(),
+        ..wrong
+    };
+    let trust: PeerTrust = admin
+        .request(Method::POST, "v1/peers/trust", Some(&approval))
+        .await
+        .unwrap();
+    assert_eq!(trust.id, slot);
+
+    let request_id = uuid::Uuid::new_v4();
+    f.api
+        .peer_store
+        .peer_offer(
+            request_id,
+            remote.fingerprint(),
+            Direction::Inbound,
+            Manifest::new(vec![Entry::File {
+                path: "hello.txt".into(),
+                size: 5,
+                sha256: Hash::digest(b"hello"),
+            }])
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let requests: Vec<PeerRequest> = admin
+        .request(Method::GET, "v1/peers/requests", None::<&()>)
+        .await
+        .unwrap();
+    assert_eq!(requests[0].state, State::AwaitingApproval);
+    let accepted: PeerRequest = admin
+        .request(
+            Method::POST,
+            &format!("v1/peers/requests/{request_id}/decision"),
+            Some(&PeerDecision {
+                expected_revision: 0,
+                action: PeerAction::Accept,
+                destination: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.state, State::Negotiating);
+    let stale: Result<PeerRequest, _> = admin
+        .request(
+            Method::POST,
+            &format!("v1/peers/requests/{request_id}/decision"),
+            Some(&PeerDecision {
+                expected_revision: 0,
+                action: PeerAction::Cancel,
+                destination: None,
+            }),
+        )
+        .await;
+    assert!(stale.is_err());
+    let revoked: PeerTrust = admin
+        .request(
+            Method::DELETE,
+            &format!("v1/peers/trust/{slot}/0"),
+            None::<&()>,
+        )
+        .await
+        .unwrap();
+    assert!(revoked.revoked);
 }
 
 #[tokio::test]

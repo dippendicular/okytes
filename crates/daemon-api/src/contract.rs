@@ -22,6 +22,17 @@ pub struct ApiError {
     pub error: String,
 }
 
+/// Explicit native approval for one short-lived local browser session.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct QuickPairing {
+    /// Credential-free local bookmark URL.
+    pub url: String,
+    /// One-use approval code displayed only by the trusted native client.
+    pub code: String,
+    /// Positive code lifetime in seconds.
+    pub expires_in: u32,
+}
+
 /// Administration request. The maximum permitted lifetime is 90 days.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -73,4 +84,102 @@ pub struct Connection {
     pub url: String,
     /// Bearer token, read from a protected file by native apps.
     pub token: String,
+}
+
+/// Public half of this installation's persistent peer identity.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PeerIdentity {
+    /// SHA-256 fingerprint shown on the trusted native surface.
+    pub fingerprint: String,
+    /// Base64 DER certificate exchanged out of band during pairing.
+    pub certificate: String,
+}
+
+/// Fingerprint-confirmed trust update. The certificate is public material;
+/// first approval uses no expected revision and replacement requires one.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerApproval {
+    pub id: uuid::Uuid,
+    pub certificate: String,
+    pub confirmed_fingerprint: String,
+    pub expected_revision: Option<u64>,
+}
+
+/// Public trust metadata returned to native management clients.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PeerTrust {
+    pub id: uuid::Uuid,
+    pub fingerprint: String,
+    pub revision: u64,
+    pub revoked: bool,
+}
+
+/// Compare-and-swap lifecycle decision for an admitted peer request.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerDecision {
+    pub expected_revision: u64,
+    pub action: PeerAction,
+    /// Receiver-selected directory, used only when accepting inbound data.
+    #[serde(default)]
+    pub destination: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerAction {
+    Accept,
+    Reject,
+    Pause,
+    Retry,
+    Cancel,
+}
+
+/// Immutable peer offer and its current durable lifecycle.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PeerRequest {
+    pub id: uuid::Uuid,
+    pub peer_fingerprint: String,
+    pub direction: okytes_core::peer::Direction,
+    pub manifest: okytes_core::peer::Manifest,
+    pub state: okytes_core::peer::State,
+    pub revision: u64,
+    pub bytes: u64,
+    pub total: u64,
+    pub files_completed: u32,
+    pub failure: Option<String>,
+    /// Local receiver destination; never populated for outbound requests.
+    pub destination: Option<String>,
+}
+
+/// Manual-address outbound transfer. Source paths are consumed only by the
+/// local native daemon and are never placed in the wire manifest.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerSend {
+    pub peer_id: uuid::Uuid,
+    pub address: String,
+    pub paths: Vec<String>,
+}
+
+/// Unauthenticated DNS-SD address hint. `trusted` only means its advertised
+/// fingerprint currently matches a local pin; TLS still proves the identity.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PeerDevice {
+    pub peer_id: Option<uuid::Uuid>,
+    pub fullname: String,
+    pub name: String,
+    pub os: String,
+    pub protocol: u16,
+    pub fingerprint: String,
+    pub addresses: Vec<String>,
+    pub port: u16,
+    pub trusted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerDiscoverySetting {
+    pub enabled: bool,
 }

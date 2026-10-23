@@ -12,8 +12,9 @@ patchelf. Windows needs the MSVC build tools and WebView2; macOS needs Xcode
 command-line tools. Run `node scripts/prepare-vendor.mjs` first: it restores
 checksum-pinned, reviewed torrent dependencies into the ignored vendor folder.
 
-Run `cargo build --workspace --locked`. For the desktop, run
-`pnpm --dir apps/desktop install --frozen-lockfile` and
+Run `pnpm --dir apps/desktop install --frozen-lockfile` and
+`pnpm --dir apps/desktop build:quick` to bundle the local daemon UI, then
+`cargo build --workspace --locked`. For the desktop, run
 `pnpm --dir apps/desktop tauri dev`. Use an isolated `OKYTES_DATA_DIR` when
 testing changes to persisted state. Never put credentials, private signing keys
 or personal download URLs in fixtures, logs or pull requests.
@@ -32,8 +33,8 @@ reject changed remote identities. Keep buffers, queues and connection counts
 bounded. Downloads are never executed automatically. New dependencies need a
 compatible license and a reason to exist.
 
-Packaging and release procedures are in `packaging/RELEASING.md`; installation
-and removal are in `packaging/INSTALLATION.md`. Building successfully does not
+Release automation is in `.github/workflows/release.yml`; installation
+and removal are in `INSTALLATION.md`. Building successfully does not
 establish that an installer or another platform works. State unverified cases
 plainly in your pull request.
 

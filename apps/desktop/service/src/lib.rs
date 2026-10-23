@@ -60,6 +60,11 @@ fn id(value: &str) -> EngineResult<JobId> {
 }
 
 impl Session {
+    /// Clone the handle to this session's single serialized profile writer for
+    /// protocol adapters owned by the same process.
+    pub fn profile_store(&self) -> Arc<SqliteStore> {
+        self.store.clone()
+    }
     /// Full engine metadata for CLI compatibility; session headers are omitted.
     pub async fn engine_record(&self, id: JobId) -> EngineResult<JobRecord> {
         self.engine.status(id).await
@@ -195,8 +200,10 @@ impl Session {
     }
     /// Open durable history and recover interrupted transfers with exclusive ownership.
     pub async fn open(database: &Path, destination: &Path) -> EngineResult<Arc<Self>> {
-        let store = Arc::new(SqliteStore::open(database)?);
+        // A losing contender must not migrate or create a writable store before
+        // discovering that another process already owns its engine.
         let lease = Arc::new(SqliteStore::acquire_engine(database)?);
+        let store = Arc::new(SqliteStore::open(database)?);
         let mut settings = match store.preference("desktop-v1").await? {
             Some(value) => serde_json::from_str(&value).map_err(|e| invalid(e.to_string()))?,
             None => Settings {

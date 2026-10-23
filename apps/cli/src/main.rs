@@ -1,7 +1,7 @@
 //! Foreground CLI using the same engine and checkpoint store as library clients.
 use anyhow::{bail, Result};
 use base64::Engine as _;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use futures::{stream, StreamExt};
 use okytes_core::{
     engine::Engine,
@@ -35,6 +35,41 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Show this daemon's public peer certificate and fingerprint.
+    PeerIdentity,
+    /// List current DNS-SD address hints. Discovery is never identity proof.
+    PeerDiscover,
+    /// Approve a peer certificate after independently comparing its fingerprint.
+    PeerTrust {
+        certificate: PathBuf,
+        fingerprint: String,
+        #[arg(long)]
+        id: Option<Uuid>,
+    },
+    /// Send selected files or folders to a paired manual address.
+    PeerSend {
+        peer: Uuid,
+        address: String,
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+    /// List incoming and outgoing peer requests.
+    PeerRequests {
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
+    },
+    /// Accept, reject, pause, retry, or cancel a peer request.
+    PeerDecide {
+        id: Uuid,
+        revision: u64,
+        action: CliPeerAction,
+    },
+    /// Approve a short-lived browser session on an explicitly selected daemon.
+    Quick {
+        /// Open the credential-free local page in the default browser.
+        #[arg(long)]
+        open: bool,
+    },
     /// List supported VOD video, audio and subtitle selections.
     MediaInspect {
         url: String,
@@ -110,6 +145,15 @@ enum Command {
     },
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum CliPeerAction {
+    Accept,
+    Reject,
+    Pause,
+    Retry,
+    Cancel,
+}
+
 fn validate(c: &EngineConfig) -> Result<()> {
     c.validate()?;
     Ok(())
@@ -148,7 +192,28 @@ async fn execute(args: Args) -> Result<()> {
         _ => bail!("provide both --daemon-url and --token-file"),
     };
     if let Some(client) = remote {
+        if let Command::Quick { open } = &args.command {
+            let pairing = client.quick_pair().await?;
+            if *open {
+                okytes_daemon_api::open_quick(&pairing.url)?;
+            }
+            return print(pairing, args.json);
+        }
         return remote_execute(args, client).await;
+    }
+    if matches!(args.command, Command::Quick { .. }) {
+        bail!("start the daemon with --quick and select it using --daemon-url and --token-file");
+    }
+    if matches!(
+        args.command,
+        Command::PeerIdentity
+            | Command::PeerDiscover
+            | Command::PeerTrust { .. }
+            | Command::PeerSend { .. }
+            | Command::PeerRequests { .. }
+            | Command::PeerDecide { .. }
+    ) {
+        bail!("peer operations require the authenticated daemon; provide --daemon-url and --token-file");
     }
     let store = Arc::new(SqliteStore::open(&args.db)?);
     let mut config = store.config().await?;
@@ -177,6 +242,13 @@ async fn execute(args: Args) -> Result<()> {
         engine.event_sender(),
     )?;
     match args.command {
+        Command::PeerIdentity
+        | Command::PeerDiscover
+        | Command::PeerTrust { .. }
+        | Command::PeerSend { .. }
+        | Command::PeerRequests { .. }
+        | Command::PeerDecide { .. } => bail!("peer operations require daemon mode"),
+        Command::Quick { .. } => bail!("Quick Download requires an explicitly selected daemon"),
         Command::MediaInspect { url } => {
             let media =
                 okytes_transport_media::MediaTransport::new(Arc::new(HttpTransport::new(&config)?));
@@ -382,6 +454,106 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
     use okytes_core::desktop::{Action, DesktopService, Submit};
     use reqwest::Method;
     match args.command {
+        Command::PeerIdentity => {
+            let value: okytes_daemon_api::contract::PeerIdentity = client
+                .request(Method::GET, "v1/peers/identity", None::<&()>)
+                .await?;
+            print(value, args.json)?;
+        }
+        Command::PeerDiscover => {
+            let value: Vec<okytes_daemon_api::contract::PeerDevice> = client
+                .request(Method::GET, "v1/peers/discovery", None::<&()>)
+                .await?;
+            print(value, args.json)?;
+        }
+        Command::PeerTrust {
+            certificate,
+            fingerprint,
+            id,
+        } => {
+            let value: okytes_daemon_api::contract::PeerTrust = client
+                .request(
+                    Method::POST,
+                    "v1/peers/trust",
+                    Some(&okytes_daemon_api::contract::PeerApproval {
+                        id: id.unwrap_or_else(Uuid::new_v4),
+                        certificate: base64::engine::general_purpose::STANDARD
+                            .encode(std::fs::read(certificate)?),
+                        confirmed_fingerprint: fingerprint,
+                        expected_revision: None,
+                    }),
+                )
+                .await?;
+            print(value, args.json)?;
+        }
+        Command::PeerSend {
+            peer,
+            address,
+            paths,
+        } => {
+            let paths = paths
+                .into_iter()
+                .map(|path| {
+                    if path.is_absolute() {
+                        Ok(path)
+                    } else {
+                        std::env::current_dir().map(|cwd| cwd.join(path))
+                    }
+                })
+                .collect::<std::io::Result<Vec<_>>>()?;
+            let id: String = client
+                .request(
+                    Method::POST,
+                    "v1/peers/send",
+                    Some(&okytes_daemon_api::contract::PeerSend {
+                        peer_id: peer,
+                        address,
+                        paths: paths
+                            .into_iter()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .collect(),
+                    }),
+                )
+                .await?;
+            print(id, args.json)?;
+        }
+        Command::PeerRequests { offset } => {
+            let value: Vec<okytes_daemon_api::contract::PeerRequest> = client
+                .request(
+                    Method::GET,
+                    &format!("v1/peers/requests?offset={offset}"),
+                    None::<&()>,
+                )
+                .await?;
+            print(value, args.json)?;
+        }
+        Command::PeerDecide {
+            id,
+            revision,
+            action,
+        } => {
+            use okytes_daemon_api::contract::PeerAction;
+            let action = match action {
+                CliPeerAction::Accept => PeerAction::Accept,
+                CliPeerAction::Reject => PeerAction::Reject,
+                CliPeerAction::Pause => PeerAction::Pause,
+                CliPeerAction::Retry => PeerAction::Retry,
+                CliPeerAction::Cancel => PeerAction::Cancel,
+            };
+            let value: okytes_daemon_api::contract::PeerRequest = client
+                .request(
+                    Method::POST,
+                    &format!("v1/peers/requests/{id}/decision"),
+                    Some(&okytes_daemon_api::contract::PeerDecision {
+                        expected_revision: revision,
+                        action,
+                        destination: None,
+                    }),
+                )
+                .await?;
+            print(value, args.json)?;
+        }
+        Command::Quick { .. } => bail!("Quick Download approval was not initialized"),
         Command::MediaInspect { url } => print(client.inspect_media(url).await?, args.json)?,
         Command::Torrent {
             source,

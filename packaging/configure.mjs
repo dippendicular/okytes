@@ -22,6 +22,11 @@ await writeFile(
       bundle: {
         createUpdaterArtifacts: signing,
         resources: ["third-party-notices/**/*"],
+        externalBin: [
+          "binaries/okytes-cli",
+          "binaries/okytes-daemon",
+          "binaries/okytes-native-host",
+        ],
         ...(windows ? { windows } : {}),
       },
       plugins: {

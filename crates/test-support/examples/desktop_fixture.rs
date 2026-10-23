@@ -5,7 +5,13 @@ use std::time::Duration;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = TestServer::start(ServerConfig {
         file_size: 8 * 1024 * 1024,
-        frame_delay: Duration::from_millis(25),
+        frame_delay: Duration::from_millis(
+            std::env::var("OKYTES_FIXTURE_FRAME_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value <= 1000)
+                .unwrap_or(25),
+        ),
         ..Default::default()
     })
     .await?;

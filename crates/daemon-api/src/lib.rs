@@ -2,4 +2,6 @@
 //! service DTOs; native apps select this backend without changing webview commands.
 pub mod client;
 pub mod contract;
+mod quick;
 pub use client::Client;
+pub use quick::open_quick;
