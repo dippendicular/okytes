@@ -1,0 +1,21 @@
+[package]
+name = "okytes-sdk"
+description = "Stable embedded and daemon-client SDK for Okytes transfers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["download", "transfer", "sdk", "resume"]
+categories = ["api-bindings", "network-programming"]
+
+[dependencies]
+okytes-core.workspace = true
+okytes-daemon-api = { version = "=0.1.0", path = "../daemon-api" }
+okytes-desktop-service = { version = "=0.1.0", path = "../../apps/desktop/service" }
+okytes-torrent-types.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "okytes-sdk"
+version = "0.1.0"
+description = "Typed asynchronous client for the Okytes transfer daemon"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "Okytes contributors" }]
+classifiers = ["Typing :: Typed", "Programming Language :: Python :: 3 :: Only"]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/dippendicular/okytes"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/okytes"]
+

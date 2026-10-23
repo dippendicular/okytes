@@ -21,6 +21,36 @@ fn invalid() -> EngineError {
     EngineError::Config("daemon request failed; check credentials, scope and connection".into())
 }
 impl Client {
+    /// Negotiate only capabilities actually advertised by the connected daemon.
+    pub async fn capabilities(&self) -> EngineResult<Capabilities> {
+        self.request(Method::GET, "v1/capabilities", None::<&()>).await
+    }
+
+    pub async fn peer_requests(&self, offset: u32) -> EngineResult<Vec<PeerRequest>> {
+        self.request(
+            Method::GET,
+            &format!("v1/peers/requests?offset={offset}"),
+            None::<&()>,
+        )
+        .await
+    }
+
+    pub async fn peer_send(&self, input: PeerSend) -> EngineResult<String> {
+        self.request(Method::POST, "v1/peers/send", Some(&input)).await
+    }
+
+    pub async fn peer_decide(
+        &self,
+        id: uuid::Uuid,
+        input: PeerDecision,
+    ) -> EngineResult<PeerRequest> {
+        self.request(
+            Method::POST,
+            &format!("v1/peers/requests/{id}/decision"),
+            Some(&input),
+        )
+        .await
+    }
     /// Ask the local owner for an explicitly approved one-use browser code.
     pub async fn quick_pair(&self) -> EngineResult<QuickPairing> {
         if self.base.scheme() != "http"

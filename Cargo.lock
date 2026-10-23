@@ -4803,6 +4803,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "okytes-sdk"
+version = "0.1.0"
+dependencies = [
+ "okytes-core",
+ "okytes-daemon-api",
+ "okytes-desktop-service",
+ "okytes-torrent-types",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "okytes-test-support"
 version = "0.1.0"
 dependencies = [

@@ -20,6 +20,45 @@ pub enum Scope {
 pub struct ApiError {
     /// Machine-readable error code.
     pub error: String,
+    /// Stable broad category for SDK branching.
+    pub category: ErrorCategory,
+    /// Whether retrying later may succeed without changing the request.
+    pub retryable: bool,
+    /// Sanitized user-facing summary with no submitted URL or credential.
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCategory {
+    Validation,
+    Authentication,
+    Authorization,
+    Conflict,
+    NotFound,
+    RateLimit,
+    Timeout,
+    Unavailable,
+    Internal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Capabilities {
+    pub api_version: String,
+    pub sdk_compatibility: String,
+    pub protocols: Vec<ProtocolCapability>,
+    pub event_delivery: String,
+    pub max_page_size: u32,
+    pub max_batch_size: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProtocolCapability {
+    pub protocol: String,
+    pub operations: Vec<String>,
+    pub resume: bool,
+    pub integrity: bool,
+    pub approval_required: bool,
 }
 
 /// Explicit native approval for one short-lived local browser session.

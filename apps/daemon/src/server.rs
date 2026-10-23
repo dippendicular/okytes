@@ -199,7 +199,26 @@ impl Api {
     }
 }
 fn error(status: StatusCode, code: &str) -> Response {
-    (status, Json(ApiError { error: code.into() })).into_response()
+    let (category, retryable, message) = match status {
+        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY =>
+            (ErrorCategory::Validation, false, "The request is invalid."),
+        StatusCode::UNAUTHORIZED =>
+            (ErrorCategory::Authentication, false, "Authentication is required."),
+        StatusCode::FORBIDDEN =>
+            (ErrorCategory::Authorization, false, "The credential does not permit this operation."),
+        StatusCode::CONFLICT =>
+            (ErrorCategory::Conflict, false, "The request conflicts with current state."),
+        StatusCode::NOT_FOUND =>
+            (ErrorCategory::NotFound, false, "The requested resource was not found."),
+        StatusCode::TOO_MANY_REQUESTS =>
+            (ErrorCategory::RateLimit, true, "The service is busy; retry later."),
+        StatusCode::REQUEST_TIMEOUT =>
+            (ErrorCategory::Timeout, true, "The operation timed out."),
+        StatusCode::SERVICE_UNAVAILABLE =>
+            (ErrorCategory::Unavailable, true, "The service is unavailable."),
+        _ => (ErrorCategory::Internal, false, "The operation failed."),
+    };
+    (status, Json(ApiError { error: code.into(), category, retryable, message: message.into() })).into_response()
 }
 fn rejection(_: impl std::fmt::Display) -> Response {
     error(StatusCode::BAD_REQUEST, "invalid_request")
@@ -409,6 +428,7 @@ pub fn router(api: Arc<Api>) -> Router {
         )
         .route("/v1/peers/requests/{id}/decision", post(peer_decide))
         .route("/v1/openapi.json", get(spec))
+        .route("/v1/capabilities", get(capabilities))
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not_found") })
         .layer(DefaultBodyLimit::max(1048576))
         .layer(middleware::from_fn_with_state(api.clone(), guard))
@@ -1145,8 +1165,26 @@ fn updates(
 async fn spec() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi())
 }
+#[utoipa::path(get,path="/v1/capabilities",responses((status=200,body=Capabilities)),security(("bearer"=[])))]
+async fn capabilities() -> Json<Capabilities> {
+    Json(Capabilities {
+        api_version: "1".into(),
+        sdk_compatibility: ">=0.1.0,<0.2.0".into(),
+        protocols: vec![
+            ProtocolCapability { protocol: "http".into(), operations: vec!["download".into()], resume: true, integrity: true, approval_required: false },
+            ProtocolCapability { protocol: "ftp".into(), operations: vec!["download".into()], resume: true, integrity: true, approval_required: false },
+            ProtocolCapability { protocol: "sftp".into(), operations: vec!["download".into()], resume: true, integrity: true, approval_required: false },
+            ProtocolCapability { protocol: "torrent".into(), operations: vec!["inspect".into(), "download".into(), "seed".into()], resume: true, integrity: true, approval_required: false },
+            ProtocolCapability { protocol: "media".into(), operations: vec!["inspect".into(), "download".into()], resume: true, integrity: true, approval_required: false },
+            ProtocolCapability { protocol: "okytes-peer".into(), operations: vec!["discover".into(), "send".into(), "receive".into()], resume: true, integrity: true, approval_required: true },
+        ],
+        event_delivery: "bounded_sse_resync".into(),
+        max_page_size: 256,
+        max_batch_size: 100,
+    })
+}
 #[derive(OpenApi)]
-#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(quick_pair,inspect_media,authorize_file,list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,records,record,config,set_config,add_torrent,inspect_torrent,torrent,peer_identity,peer_trusts,peer_approve,peer_revoke,peer_requests,peer_send,peer_devices,peer_discovery_setting,peer_set_discovery,peer_decide),components(schemas(Update,ApiError)),modifiers(&Security))]
+#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(quick_pair,inspect_media,authorize_file,list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,capabilities,records,record,config,set_config,add_torrent,inspect_torrent,torrent,peer_identity,peer_trusts,peer_approve,peer_revoke,peer_requests,peer_send,peer_devices,peer_discovery_setting,peer_set_discovery,peer_decide),components(schemas(Update,ApiError)),modifiers(&Security))]
 struct Contract;
 struct Security;
 impl utoipa::Modify for Security {

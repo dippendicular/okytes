@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/v1/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["capabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/capture": {
         parameters: {
             query?: never;
@@ -497,8 +513,24 @@ export interface components {
         };
         /** @description Stable sanitized error response. Never contains submitted URLs or tokens. */
         ApiError: {
+            /** @description Stable broad category for SDK branching. */
+            category: components["schemas"]["ErrorCategory"];
             /** @description Machine-readable error code. */
             error: string;
+            /** @description Sanitized user-facing summary with no submitted URL or credential. */
+            message: string;
+            /** @description Whether retrying later may succeed without changing the request. */
+            retryable: boolean;
+        };
+        Capabilities: {
+            api_version: string;
+            event_delivery: string;
+            /** Format: int32 */
+            max_batch_size: number;
+            /** Format: int32 */
+            max_page_size: number;
+            protocols: components["schemas"]["ProtocolCapability"][];
+            sdk_compatibility: string;
         };
         /** @description Explicit one-download session handoff; values remain memory-only. */
         Capture: {
@@ -667,6 +699,8 @@ export interface components {
             /** @description Exact NFC relative path; parents must also be explicit entries. */
             path: string;
         };
+        /** @enum {string} */
+        ErrorCategory: "validation" | "authentication" | "authorization" | "conflict" | "not_found" | "rate_limit" | "timeout" | "unavailable" | "internal";
         /** @description Memory-only file login and an optional explicitly confirmed SSH fingerprint. */
         FileCredentials: {
             /** @description Exact SHA256 fingerprint the user has verified and confirmed. */
@@ -959,6 +993,13 @@ export interface components {
             /** Format: int64 */
             revision: number;
             revoked: boolean;
+        };
+        ProtocolCapability: {
+            approval_required: boolean;
+            integrity: boolean;
+            operations: string[];
+            protocol: string;
+            resume: boolean;
         };
         /** @description Explicit native approval for one short-lived local browser session. */
         QuickPairing: {
@@ -1373,6 +1414,79 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    capabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Capabilities"];
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     capture: {
         parameters: {
             query?: never;

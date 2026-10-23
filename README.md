@@ -129,6 +129,10 @@ tab again. Links that depend on browser cookies or expired site tokens may need
 the extension or a fresh direct URL.
 
 ## How it works
+
+### SDK and automation
+
+Okytes can be embedded in a Rust application or controlled through an authenticated daemon from Rust, TypeScript/Node.js, and Python. These SDKs reuse the same durable engine and protocol adapters; daemon clients never open its database. Start with the [SDK overview](docs/sdk/overview.md).
 <img width="1536" height="1024" alt="Okytes Download Manager Architecture Infographic" src="https://github.com/user-attachments/assets/f82143ed-0087-499c-81d7-5520076a53d5" />
 
 One Rust engine manages transfers, state, recovery, and verification. Desktop apps, browser extensions, and other interfaces are clients, not separate download engines.

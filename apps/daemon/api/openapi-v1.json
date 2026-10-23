@@ -10,6 +10,89 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/v1/capabilities": {
+      "get": {
+        "tags": [],
+        "operationId": "capabilities",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, Origin or scope rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "Request deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate, request or subscriber admission limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/capture": {
       "post": {
         "tags": [],
@@ -3254,12 +3337,65 @@
         "type": "object",
         "description": "Stable sanitized error response. Never contains submitted URLs or tokens.",
         "required": [
-          "error"
+          "error",
+          "category",
+          "retryable",
+          "message"
         ],
         "properties": {
+          "category": {
+            "$ref": "#/components/schemas/ErrorCategory",
+            "description": "Stable broad category for SDK branching."
+          },
           "error": {
             "type": "string",
             "description": "Machine-readable error code."
+          },
+          "message": {
+            "type": "string",
+            "description": "Sanitized user-facing summary with no submitted URL or credential."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether retrying later may succeed without changing the request."
+          }
+        }
+      },
+      "Capabilities": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "sdk_compatibility",
+          "protocols",
+          "event_delivery",
+          "max_page_size",
+          "max_batch_size"
+        ],
+        "properties": {
+          "api_version": {
+            "type": "string"
+          },
+          "event_delivery": {
+            "type": "string"
+          },
+          "max_batch_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_page_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "protocols": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProtocolCapability"
+            }
+          },
+          "sdk_compatibility": {
+            "type": "string"
           }
         }
       },
@@ -3656,6 +3792,20 @@
           }
         ],
         "description": "Only regular files and directories can appear on the wire. Links, device\nobjects, permissions and sender absolute paths have no representation."
+      },
+      "ErrorCategory": {
+        "type": "string",
+        "enum": [
+          "validation",
+          "authentication",
+          "authorization",
+          "conflict",
+          "not_found",
+          "rate_limit",
+          "timeout",
+          "unavailable",
+          "internal"
+        ]
       },
       "FileCredentials": {
         "type": "object",
@@ -4359,6 +4509,36 @@
             "minimum": 0
           },
           "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ProtocolCapability": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "operations",
+          "resume",
+          "integrity",
+          "approval_required"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean"
+          },
+          "integrity": {
+            "type": "boolean"
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "resume": {
             "type": "boolean"
           }
         }

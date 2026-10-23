@@ -1,16 +1,21 @@
 {
   "name": "@okytes/sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "Authenticated TypeScript and Node.js client for the Okytes transfer daemon",
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/dippendicular/okytes",
+  "engines": { "node": ">=20" },
+  "files": ["dist", "README.md"],
   "type": "module",
-  "exports": "./dist/index.js",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "types": "./dist/index.d.ts",
   "packageManager": "pnpm@11.11.0",
   "scripts": {
     "generate": "openapi-typescript ../../apps/daemon/api/openapi-v1.json -o src/schema.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "node --test tests/client.test.mjs tests/quick.test.mjs"
+    "test": "node --test tests/client.test.mjs tests/quick.test.mjs",
+    "pack:check": "pnpm pack --dry-run"
   },
   "dependencies": {
     "openapi-fetch": "^0.14.0"
