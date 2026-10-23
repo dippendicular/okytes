@@ -5,7 +5,7 @@
 
 **A download manager built to finish what it starts.**
 
-Recoverable downloads, verified files, and control over your bandwidth. Free, open source, and fully local.
+Recoverable downloads, verified files, and control over your bandwidth. Free, open source, and fully local..
 
 ![Windows · Linux · macOS](https://img.shields.io/badge/Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey)
 ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-black)
