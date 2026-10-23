@@ -4,7 +4,7 @@ members = [
     "crates/core",
     "crates/transport-http",
     "crates/persistence",
-    "crates/test-support",
+    "dev-tools/test-support",
     "apps/cli",
     "apps/desktop/service",
     "apps/desktop/src-tauri",
@@ -12,7 +12,7 @@ members = [
     "apps/native-host",
     "crates/daemon-api",
     "apps/daemon",
-    "benchmarks",
+    "dev-tools/benchmarks",
     "crates/torrent-types",
     "crates/transport-torrent",
     "crates/transport-ftp",
@@ -76,7 +76,7 @@ futures = "0.3"
 okytes-core = { version = "=0.1.0", path = "crates/core" }
 okytes-transport-http = { version = "=0.1.0", path = "crates/transport-http" }
 okytes-persistence = { version = "=0.1.0", path = "crates/persistence" }
-okytes-test-support = { version = "=0.1.0", path = "crates/test-support" }
+okytes-test-support = { version = "=0.1.0", path = "dev-tools/test-support" }
 okytes-torrent-types = { version = "=0.1.0", path = "crates/torrent-types" }
 okytes-transport-torrent = { version = "=0.1.0", path = "crates/transport-torrent" }
 okytes-transport-ftp = { version = "=0.1.0", path = "crates/transport-ftp" }

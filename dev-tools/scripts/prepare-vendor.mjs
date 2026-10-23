@@ -14,8 +14,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-const root = fileURLToPath(new URL("../", import.meta.url));
-const patches = join(root, "scripts/vendor-patches");
+const root = fileURLToPath(new URL("../../", import.meta.url));
+const patches = join(root, "dev-tools/scripts/vendor-patches");
 const manifest = JSON.parse(
   await readFile(join(patches, "manifest.json"), "utf8"),
 );
