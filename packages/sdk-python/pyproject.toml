@@ -13,9 +13,15 @@ authors = [{ name = "Okytes contributors" }]
 classifiers = ["Typing :: Typed", "Programming Language :: Python :: 3 :: Only"]
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["build>=1.2", "twine>=5.1"]
+
 [project.urls]
 Repository = "https://github.com/dippendicular/okytes"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/okytes"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/okytes", "README.md", "CHANGELOG.md", "LICENSE-APACHE", "LICENSE-MIT", "pyproject.toml"]
 

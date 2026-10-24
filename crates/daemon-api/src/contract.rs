@@ -50,6 +50,9 @@ pub struct Capabilities {
     pub event_delivery: String,
     pub max_page_size: u32,
     pub max_batch_size: u32,
+    pub idempotency_retention_seconds: u32,
+    pub destination_semantics: String,
+    pub credential_policy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -59,6 +62,7 @@ pub struct ProtocolCapability {
     pub resume: bool,
     pub integrity: bool,
     pub approval_required: bool,
+    pub credential_kind: Option<String>,
 }
 
 /// Explicit native approval for one short-lived local browser session.
@@ -113,9 +117,6 @@ pub enum Update {
     /// Initial subscription or dropped updates; discard stale local state.
     Resync,
 }
-
-/// One authenticated browser handoff, preserving the existing native schema.
-pub type Capture = okytes_browser_bridge::protocol::Request;
 
 /// Client endpoint selection; secrets are never included in Debug output.
 pub struct Connection {

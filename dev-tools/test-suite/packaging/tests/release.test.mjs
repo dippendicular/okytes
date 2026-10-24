@@ -13,8 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createRun } from "../linux/create-run.mjs";
-import { normalizeTimestamps } from "../timestamps.mjs";
+import { createRun } from "../../../../packaging/linux/create-run.mjs";
+import { normalizeTimestamps } from "../../../../packaging/timestamps.mjs";
 
 test("native packages stage all Quick companions with Tauri target names", async () => {
   const directory = await mkdtemp(join(tmpdir(), "okytes-companions-"));

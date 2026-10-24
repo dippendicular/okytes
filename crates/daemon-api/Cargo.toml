@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+browser-capture = ["dep:okytes-browser-bridge"]
+
 [dependencies]
 okytes-core.workspace = true
 okytes-torrent-types.workspace = true
@@ -17,7 +21,8 @@ utoipa.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 url.workspace = true
-okytes-browser-bridge = { version = "=0.1.0", path = "../browser-bridge" }
+thiserror.workspace = true
+okytes-browser-bridge = { version = "=0.1.0", path = "../browser-bridge", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

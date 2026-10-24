@@ -9,7 +9,7 @@ persistence and public API changes before committing to a large implementation.
 Install the pinned Rust toolchain, Node.js 24, pnpm 11.11, Git and tar. On Linux,
 install WebKitGTK 4.1 development files, GTK 3, Ayatana AppIndicator, librsvg and
 patchelf. Windows needs the MSVC build tools and WebView2; macOS needs Xcode
-command-line tools. Run `node scripts/prepare-vendor.mjs` first: it restores
+command-line tools. Run `node dev-tools/scripts/prepare-vendor.mjs` first: it restores
 checksum-pinned, reviewed torrent dependencies into the ignored vendor folder.
 
 Run `pnpm --dir apps/desktop install --frozen-lockfile` and

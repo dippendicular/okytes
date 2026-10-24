@@ -314,7 +314,7 @@ async fn run(runs: u32, output: PathBuf, mode: String) -> Result<()> {
         "crates/core/src/fairness.rs",
         "crates/core/src/traffic.rs",
         "crates/core/src/types.rs",
-        "crates/test-support/src/server.rs",
+        "dev-tools/test-suite/test-support/src/server.rs",
         "crates/transport-http/src/lib.rs",
     ] {
         let bytes = std::fs::read(path)?;

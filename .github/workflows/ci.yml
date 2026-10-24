@@ -39,7 +39,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - name: Prepare patched torrent dependencies
-        run: node scripts/prepare-vendor.mjs
+        run: node dev-tools/scripts/prepare-vendor.mjs
       - uses: Swatinem/rust-cache@v2
       - name: Build embedded Quick Download assets
         run: |
@@ -47,7 +47,7 @@ jobs:
           pnpm --dir apps/desktop build:quick
       - name: Packaging regression tests
         if: runner.os == 'Linux'
-        run: node --test packaging/tests/release.test.mjs
+        run: node --test dev-tools/test-suite/packaging/tests/release.test.mjs
       - name: Check generated bindings
         if: runner.os == 'Linux'
         run: |
@@ -120,7 +120,7 @@ jobs:
           key: stress
       - run: pnpm --dir apps/desktop install --frozen-lockfile
       - run: pnpm --dir apps/desktop build:quick
-      - run: node scripts/prepare-vendor.mjs
+      - run: node dev-tools/scripts/prepare-vendor.mjs
       - run: cargo test -p okytes-cli --test process --release --locked -- --ignored --nocapture
   workflows:
     runs-on: ubuntu-22.04
@@ -147,7 +147,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: quick-browser
-      - run: node scripts/prepare-vendor.mjs
+      - run: node dev-tools/scripts/prepare-vendor.mjs
       - run: pnpm --dir apps/desktop install --frozen-lockfile
       - run: pnpm --dir apps/desktop build:quick
       - run: cargo build --locked -p okytes-test-support --example desktop_fixture

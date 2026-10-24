@@ -3,7 +3,7 @@
 use crate::auth::Tokens;
 use axum::{
     extract::{DefaultBodyLimit, Path, Query, Request, State},
-    http::{Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -21,7 +21,8 @@ use okytes_persistence::SqliteStore;
 use okytes_torrent_types::{
     Input as TorrentInput, Metadata as TorrentMetadata, Snapshot as TorrentSnapshot, TorrentService,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     convert::Infallible,
@@ -67,6 +68,7 @@ pub struct Api {
     requests: Arc<Semaphore>,
     subscribers: Arc<Semaphore>,
     peer_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    idempotency: Mutex<()>,
 }
 impl Api {
     /// Open the real service and separate hashed credential registry.
@@ -123,6 +125,7 @@ impl Api {
             requests: Arc::new(Semaphore::new(32)),
             subscribers: Arc::new(Semaphore::new(16)),
             peer_tasks: Mutex::new(Vec::new()),
+            idempotency: Mutex::new(()),
         }))
     }
     /// Reject new requests before draining durable engine writes.
@@ -200,25 +203,52 @@ impl Api {
 }
 fn error(status: StatusCode, code: &str) -> Response {
     let (category, retryable, message) = match status {
-        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY =>
-            (ErrorCategory::Validation, false, "The request is invalid."),
-        StatusCode::UNAUTHORIZED =>
-            (ErrorCategory::Authentication, false, "Authentication is required."),
-        StatusCode::FORBIDDEN =>
-            (ErrorCategory::Authorization, false, "The credential does not permit this operation."),
-        StatusCode::CONFLICT =>
-            (ErrorCategory::Conflict, false, "The request conflicts with current state."),
-        StatusCode::NOT_FOUND =>
-            (ErrorCategory::NotFound, false, "The requested resource was not found."),
-        StatusCode::TOO_MANY_REQUESTS =>
-            (ErrorCategory::RateLimit, true, "The service is busy; retry later."),
-        StatusCode::REQUEST_TIMEOUT =>
-            (ErrorCategory::Timeout, true, "The operation timed out."),
-        StatusCode::SERVICE_UNAVAILABLE =>
-            (ErrorCategory::Unavailable, true, "The service is unavailable."),
+        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
+            (ErrorCategory::Validation, false, "The request is invalid.")
+        }
+        StatusCode::UNAUTHORIZED => (
+            ErrorCategory::Authentication,
+            false,
+            "Authentication is required.",
+        ),
+        StatusCode::FORBIDDEN => (
+            ErrorCategory::Authorization,
+            false,
+            "The credential does not permit this operation.",
+        ),
+        StatusCode::CONFLICT => (
+            ErrorCategory::Conflict,
+            false,
+            "The request conflicts with current state.",
+        ),
+        StatusCode::NOT_FOUND => (
+            ErrorCategory::NotFound,
+            false,
+            "The requested resource was not found.",
+        ),
+        StatusCode::TOO_MANY_REQUESTS => (
+            ErrorCategory::RateLimit,
+            true,
+            "The service is busy; retry later.",
+        ),
+        StatusCode::REQUEST_TIMEOUT => (ErrorCategory::Timeout, true, "The operation timed out."),
+        StatusCode::SERVICE_UNAVAILABLE => (
+            ErrorCategory::Unavailable,
+            true,
+            "The service is unavailable.",
+        ),
         _ => (ErrorCategory::Internal, false, "The operation failed."),
     };
-    (status, Json(ApiError { error: code.into(), category, retryable, message: message.into() })).into_response()
+    (
+        status,
+        Json(ApiError {
+            error: code.into(),
+            category,
+            retryable,
+            message: message.into(),
+        }),
+    )
+        .into_response()
 }
 fn rejection(_: impl std::fmt::Display) -> Response {
     error(StatusCode::BAD_REQUEST, "invalid_request")
@@ -947,6 +977,46 @@ struct Page {
     #[serde(default)]
     offset: u32,
 }
+
+fn idempotency_key(headers: &HeaderMap) -> Result<Option<String>, Response> {
+    let Some(value) = headers.get("idempotency-key") else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| error(StatusCode::BAD_REQUEST, "invalid_idempotency_key"))?;
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(error(StatusCode::BAD_REQUEST, "invalid_idempotency_key"));
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn request_digest(value: &impl Serialize) -> Result<String, Response> {
+    let bytes = serde_json::to_vec(value).map_err(rejection)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn idempotency_rejection(cause: impl std::fmt::Display) -> Response {
+    if cause.to_string().contains("idempotency key conflicts") {
+        (
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: "idempotency_conflict".into(),
+                category: ErrorCategory::Conflict,
+                retryable: false,
+                message: "The idempotency key was already used with a different request.".into(),
+            }),
+        )
+            .into_response()
+    } else {
+        rejection(cause)
+    }
+}
 #[utoipa::path(get,path="/v1/jobs",params(("offset"=Option<u32>,Query)),responses((status=200,body=Snapshot)),security(("bearer"=[])))]
 async fn list(
     State(api): State<Arc<Api>>,
@@ -968,25 +1038,69 @@ async fn list(
 async fn add(
     State(api): State<Arc<Api>>,
     axum::Extension(info): axum::Extension<TokenInfo>,
+    headers: HeaderMap,
     Json(input): Json<AddInput>,
 ) -> Result<Json<Vec<String>>, Response> {
     destination(&api, info.scope, input.destination.as_deref()).await?;
-    api.session.add(input).await.map(Json).map_err(|cause| {
+    let key = idempotency_key(&headers)?;
+    let digest = request_digest(&input)?;
+    let _serial = api.idempotency.lock().await;
+    if let Some(key) = key.as_deref() {
+        if let Some(response) = api
+            .peer_store
+            .idempotency_result(&info.id, "jobs", key, &digest)
+            .await
+            .map_err(idempotency_rejection)?
+        {
+            return serde_json::from_str(&response).map(Json).map_err(rejection);
+        }
+    }
+    let result = api.session.add(input).await.map_err(|cause| {
         if cause.to_string().contains("duplicate") {
             error(StatusCode::CONFLICT, "duplicate_url")
         } else {
             rejection(cause)
         }
-    })
+    })?;
+    if let Some(key) = key.as_deref() {
+        let response = serde_json::to_string(&result).map_err(rejection)?;
+        api.peer_store
+            .store_idempotency_result(&info.id, "jobs", key, &digest, &response)
+            .await
+            .map_err(rejection)?;
+    }
+    Ok(Json(result))
 }
 #[utoipa::path(post,path="/v1/submit",request_body=Submit,responses((status=200,body=String)),security(("bearer"=[])))]
 async fn submit(
     State(api): State<Arc<Api>>,
     axum::Extension(info): axum::Extension<TokenInfo>,
+    headers: HeaderMap,
     Json(input): Json<Submit>,
 ) -> Result<Json<String>, Response> {
     destination(&api, info.scope, input.destination.as_deref()).await?;
-    api.session.submit(input).await.map(Json).map_err(rejection)
+    let key = idempotency_key(&headers)?;
+    let digest = request_digest(&input)?;
+    let _serial = api.idempotency.lock().await;
+    if let Some(key) = key.as_deref() {
+        if let Some(response) = api
+            .peer_store
+            .idempotency_result(&info.id, "submit", key, &digest)
+            .await
+            .map_err(idempotency_rejection)?
+        {
+            return serde_json::from_str(&response).map(Json).map_err(rejection);
+        }
+    }
+    let result = api.session.submit(input).await.map_err(rejection)?;
+    if let Some(key) = key.as_deref() {
+        let response = serde_json::to_string(&result).map_err(rejection)?;
+        api.peer_store
+            .store_idempotency_result(&info.id, "submit", key, &digest, &response)
+            .await
+            .map_err(rejection)?;
+    }
+    Ok(Json(result))
 }
 
 #[utoipa::path(get,path="/v1/records",params(("offset"=Option<u32>,Query)),responses((status=200,body=Vec<okytes_core::types::JobRecord>)),security(("bearer"=[])))]
@@ -1171,16 +1285,73 @@ async fn capabilities() -> Json<Capabilities> {
         api_version: "1".into(),
         sdk_compatibility: ">=0.1.0,<0.2.0".into(),
         protocols: vec![
-            ProtocolCapability { protocol: "http".into(), operations: vec!["download".into()], resume: true, integrity: true, approval_required: false },
-            ProtocolCapability { protocol: "ftp".into(), operations: vec!["download".into()], resume: true, integrity: true, approval_required: false },
-            ProtocolCapability { protocol: "sftp".into(), operations: vec!["download".into()], resume: true, integrity: true, approval_required: false },
-            ProtocolCapability { protocol: "torrent".into(), operations: vec!["inspect".into(), "download".into(), "seed".into()], resume: true, integrity: true, approval_required: false },
-            ProtocolCapability { protocol: "media".into(), operations: vec!["inspect".into(), "download".into()], resume: true, integrity: true, approval_required: false },
-            ProtocolCapability { protocol: "okytes-peer".into(), operations: vec!["discover".into(), "send".into(), "receive".into()], resume: true, integrity: true, approval_required: true },
+            ProtocolCapability {
+                protocol: "http".into(),
+                operations: vec!["download".into()],
+                resume: true,
+                integrity: true,
+                approval_required: false,
+                credential_kind: None,
+            },
+            ProtocolCapability {
+                protocol: "ftp".into(),
+                operations: vec!["download".into(), "authorize".into()],
+                resume: true,
+                integrity: true,
+                approval_required: false,
+                credential_kind: Some("username_password".into()),
+            },
+            ProtocolCapability {
+                protocol: "sftp".into(),
+                operations: vec!["download".into(), "authorize".into()],
+                resume: true,
+                integrity: true,
+                approval_required: false,
+                credential_kind: Some("username_password_confirmed_host_key".into()),
+            },
+            ProtocolCapability {
+                protocol: "torrent".into(),
+                operations: vec![
+                    "inspect".into(),
+                    "download".into(),
+                    "seed".into(),
+                    "select_files".into(),
+                ],
+                resume: true,
+                integrity: true,
+                approval_required: false,
+                credential_kind: None,
+            },
+            ProtocolCapability {
+                protocol: "media".into(),
+                operations: vec!["inspect".into(), "download".into(), "select_tracks".into()],
+                resume: true,
+                integrity: true,
+                approval_required: false,
+                credential_kind: None,
+            },
+            ProtocolCapability {
+                protocol: "okytes-peer".into(),
+                operations: vec![
+                    "discover".into(),
+                    "send".into(),
+                    "receive".into(),
+                    "approve".into(),
+                ],
+                resume: true,
+                integrity: true,
+                approval_required: true,
+                credential_kind: Some("paired_device_identity".into()),
+            },
         ],
-        event_delivery: "bounded_sse_resync".into(),
+        event_delivery: "bounded_sse_snapshot_resync".into(),
         max_page_size: 256,
         max_batch_size: 100,
+        idempotency_retention_seconds: 86_400,
+        destination_semantics:
+            "absolute path on daemon host, restricted by token scope and configured roots".into(),
+        credential_policy:
+            "request-local credentials are held in memory and never returned by the API".into(),
     })
 }
 #[derive(OpenApi)]
@@ -1309,14 +1480,32 @@ mod tests {
 async fn add_torrent(
     State(api): State<Arc<Api>>,
     axum::Extension(info): axum::Extension<TokenInfo>,
+    headers: HeaderMap,
     Json(input): Json<TorrentInput>,
 ) -> Result<Json<String>, Response> {
     destination(&api, info.scope, input.destination.as_deref()).await?;
-    api.session
-        .add_torrent(input)
-        .await
-        .map(Json)
-        .map_err(rejection)
+    let key = idempotency_key(&headers)?;
+    let digest = request_digest(&input)?;
+    let _serial = api.idempotency.lock().await;
+    if let Some(key) = key.as_deref() {
+        if let Some(response) = api
+            .peer_store
+            .idempotency_result(&info.id, "torrents", key, &digest)
+            .await
+            .map_err(idempotency_rejection)?
+        {
+            return serde_json::from_str(&response).map(Json).map_err(rejection);
+        }
+    }
+    let result = api.session.add_torrent(input).await.map_err(rejection)?;
+    if let Some(key) = key.as_deref() {
+        let response = serde_json::to_string(&result).map_err(rejection)?;
+        api.peer_store
+            .store_idempotency_result(&info.id, "torrents", key, &digest, &response)
+            .await
+            .map_err(rejection)?;
+    }
+    Ok(Json(result))
 }
 #[utoipa::path(post,path="/v1/torrents/inspect",request_body=TorrentInput,responses((status=200,body=TorrentMetadata)),security(("bearer"=[])))]
 async fn inspect_torrent(

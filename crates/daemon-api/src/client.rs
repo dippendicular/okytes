@@ -10,6 +10,28 @@ use reqwest::{Method, Url};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{path::Path, time::Duration};
 
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct DaemonError {
+    pub code: String,
+    pub category: ErrorCategory,
+    pub retryable: bool,
+    pub status: Option<u16>,
+    pub message: String,
+}
+
+impl DaemonError {
+    fn transport(message: &str, retryable: bool) -> Self {
+        Self {
+            code: "connection_failed".into(),
+            category: ErrorCategory::Unavailable,
+            retryable,
+            status: None,
+            message: message.into(),
+        }
+    }
+}
+
 /// GUI-independent daemon backend. Secret fields deliberately omit Debug.
 #[derive(Clone)]
 pub struct Client {
@@ -23,7 +45,8 @@ fn invalid() -> EngineError {
 impl Client {
     /// Negotiate only capabilities actually advertised by the connected daemon.
     pub async fn capabilities(&self) -> EngineResult<Capabilities> {
-        self.request(Method::GET, "v1/capabilities", None::<&()>).await
+        self.request(Method::GET, "v1/capabilities", None::<&()>)
+            .await
     }
 
     pub async fn peer_requests(&self, offset: u32) -> EngineResult<Vec<PeerRequest>> {
@@ -36,7 +59,8 @@ impl Client {
     }
 
     pub async fn peer_send(&self, input: PeerSend) -> EngineResult<String> {
-        self.request(Method::POST, "v1/peers/send", Some(&input)).await
+        self.request(Method::POST, "v1/peers/send", Some(&input))
+            .await
     }
 
     pub async fn peer_decide(
@@ -120,7 +144,10 @@ impl Client {
     }
     /// Read a protected credential file; no secret appears in error strings.
     pub fn from_file(url: String, file: &Path) -> EngineResult<Self> {
-        let bytes = okytes_browser_bridge::read_secret(file).map_err(|_| invalid())?;
+        let bytes = std::fs::read(file).map_err(|_| invalid())?;
+        if bytes.len() > 4096 {
+            return Err(invalid());
+        }
         let token = String::from_utf8(bytes)
             .map_err(|_| invalid())?
             .trim()
@@ -134,32 +161,138 @@ impl Client {
         path: &str,
         body: Option<&impl Serialize>,
     ) -> EngineResult<T> {
+        self.request_sdk(method, path, body).await.map_err(|error| {
+            EngineError::Config(format!("daemon {}: {}", error.code, error.message))
+        })
+    }
+
+    /// Make a request while preserving the daemon's stable error code,
+    /// category, retryability and HTTP status for SDK consumers.
+    pub async fn request_sdk<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&impl Serialize>,
+    ) -> Result<T, DaemonError> {
         if !path.starts_with("v1/") {
-            return Err(invalid());
+            return Err(DaemonError {
+                code: "invalid_path".into(),
+                category: ErrorCategory::Validation,
+                retryable: false,
+                status: None,
+                message: "Daemon SDK paths must use the v1 contract.".into(),
+            });
         }
         let mut request = self
             .http
-            .request(method, self.base.join(path).map_err(|_| invalid())?)
+            .request(
+                method,
+                self.base
+                    .join(path)
+                    .map_err(|_| DaemonError::transport("The daemon path is invalid.", false))?,
+            )
             .bearer_auth(&self.token);
         if let Some(body) = body {
             request = request.json(body);
         }
-        let response = request.send().await.map_err(|_| invalid())?;
-        if !response.status().is_success() {
-            return Err(invalid());
+        self.request_detailed(request).await
+    }
+
+    /// Submit a retry-safe creation request with a caller-owned key. Keep the
+    /// same key when retrying an ambiguous network failure.
+    pub async fn request_idempotent<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        key: &str,
+        body: &impl Serialize,
+    ) -> Result<T, DaemonError> {
+        if !path.starts_with("v1/")
+            || key.is_empty()
+            || key.len() > 128
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(DaemonError {
+                code: "invalid_idempotency_key".into(),
+                category: ErrorCategory::Validation,
+                retryable: false,
+                status: None,
+                message: "Use a 1..128 character alphanumeric idempotency key.".into(),
+            });
         }
+        let request = self
+            .http
+            .post(
+                self.base
+                    .join(path)
+                    .map_err(|_| DaemonError::transport("The daemon path is invalid.", false))?,
+            )
+            .bearer_auth(&self.token)
+            .header("Idempotency-Key", key)
+            .json(body);
+        self.request_detailed(request).await
+    }
+
+    pub async fn submit_idempotent(
+        &self,
+        key: &str,
+        input: &Submit,
+    ) -> Result<String, DaemonError> {
+        self.request_idempotent("v1/submit", key, input).await
+    }
+
+    pub async fn add_torrent_idempotent(
+        &self,
+        key: &str,
+        input: &okytes_torrent_types::Input,
+    ) -> Result<String, DaemonError> {
+        self.request_idempotent("v1/torrents", key, input).await
+    }
+
+    async fn request_detailed<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<T, DaemonError> {
+        let response = request
+            .send()
+            .await
+            .map_err(|_| DaemonError::transport("The daemon could not be reached.", true))?;
+        let status = response.status();
         let mut bytes = Vec::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| invalid())?;
+            let chunk = chunk.map_err(|_| {
+                DaemonError::transport("The daemon response ended unexpectedly.", true)
+            })?;
             if bytes.len() + chunk.len() > 16 * 1024 * 1024 {
-                return Err(invalid());
+                return Err(DaemonError::transport(
+                    "The daemon response exceeded the client limit.",
+                    false,
+                ));
             }
             bytes.extend_from_slice(&chunk);
         }
-        serde_json::from_slice(&bytes).map_err(|_| invalid())
+        if !status.is_success() {
+            let body = serde_json::from_slice::<ApiError>(&bytes).unwrap_or(ApiError {
+                error: "request_failed".into(),
+                category: ErrorCategory::Internal,
+                retryable: status.is_server_error(),
+                message: format!("Daemon request failed ({status})."),
+            });
+            return Err(DaemonError {
+                code: body.error,
+                category: body.category,
+                retryable: body.retryable,
+                status: Some(status.as_u16()),
+                message: body.message,
+            });
+        }
+        serde_json::from_slice(&bytes)
+            .map_err(|_| DaemonError::transport("The daemon returned an invalid response.", false))
     }
     /// Preserve browser request IDs and ephemeral headers through the daemon API.
+    #[cfg(feature = "browser-capture")]
     pub async fn capture(
         &self,
         request: okytes_browser_bridge::protocol::Request,

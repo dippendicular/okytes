@@ -1,7 +1,7 @@
 // Invoked by a Rust harness hosting the production API and a real fault server.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createOkytes } from "../dist/index.js";
+import { createOkytes } from "../../../../../packages/sdk-typescript/dist/index.js";
 const token = readFileSync(process.env.OKYTES_SDK_TOKEN_FILE, "utf8");
 const { api, events } = createOkytes({
   baseUrl: process.env.OKYTES_SDK_URL,

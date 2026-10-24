@@ -1,5 +1,5 @@
 from .client import OkytesClient, OkytesError
-from .models import Capabilities, Job, Snapshot, Update
+from .models import Capabilities, Job, MediaChoice, Snapshot, TorrentMetadata, TorrentSnapshot, Update
 
-__all__ = ["Capabilities", "Job", "OkytesClient", "OkytesError", "Snapshot", "Update"]
+__all__ = ["Capabilities", "Job", "MediaChoice", "OkytesClient", "OkytesError", "Snapshot", "TorrentMetadata", "TorrentSnapshot", "Update"]
 

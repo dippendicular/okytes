@@ -1,6 +1,6 @@
 # Torrent dependency patches
 
-`vendor/` stays ignored. Run `node scripts/prepare-vendor.mjs` before the first
+`vendor/` stays ignored. Run `node dev-tools/scripts/prepare-vendor.mjs` before the first
 Cargo command in a clean checkout. The script checks upstream archive SHA-256,
 applies these patch sets, and verifies every Rust source and Cargo manifest.
 Existing local sources are verified, never overwritten. An optional

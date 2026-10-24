@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Destination
 )
 $ErrorActionPreference = 'Stop'
-$workspace = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$workspace = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
 $targetDirectory = [System.IO.Path]::GetFullPath($Destination)
 if (-not $targetDirectory.StartsWith($workspace + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Installer test destination must be inside this workspace'

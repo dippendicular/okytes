@@ -17,7 +17,7 @@ async fn generated_sdk_operates_against_a_real_running_daemon() {
     .await
     .unwrap();
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packages/sdk-typescript/tests/live.mjs");
+        .join("../../dev-tools/test-suite/packages/sdk-typescript/tests/live.mjs");
     let result = tokio::time::timeout(
         Duration::from_secs(45),
         tokio::process::Command::new("node")

@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 okytes-browser-bridge = { version = "=0.1.0", path = "../../crates/browser-bridge" }
-okytes-daemon-api = { version = "=0.1.0", path = "../../crates/daemon-api" }
+okytes-daemon-api = { version = "=0.1.0", path = "../../crates/daemon-api", features = ["browser-capture"] }
 tokio.workspace = true
 serde_json.workspace = true
 clap.workspace = true

@@ -3,7 +3,7 @@
 <img width="360" alt="Okytes" src="../assets/images/brand/okytes_logo_transperant.png" />
 
 This harness uses a deterministic loopback origin and a separate download worker.
-The origin reuses `crates/test-support`; generated content is checked with SHA-256.
+The origin reuses `dev-tools/test-suite/test-support`; generated content is checked with SHA-256.
 It is a developer tool and is not linked into production applications.
 
 ```sh

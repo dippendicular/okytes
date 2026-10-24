@@ -14,6 +14,42 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  sdk-packages:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: node dev-tools/scripts/prepare-vendor.mjs
+      - name: Build SDK packages without publishing
+        shell: bash
+        run: |
+          mkdir -p sdk-artifacts
+          pnpm --dir packages/sdk-typescript install --frozen-lockfile
+          pnpm --dir packages/sdk-typescript generate
+          pnpm --dir packages/sdk-typescript build
+          (cd packages/sdk-typescript && pnpm pack --pack-destination ../../sdk-artifacts)
+          python -m pip install --disable-pip-version-check build twine
+          python -m build packages/sdk-python --outdir sdk-artifacts
+          python -m twine check sdk-artifacts/*
+          cargo package -p okytes-sdk --locked --no-verify
+          cp target/package/okytes-sdk-*.crate sdk-artifacts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-packages
+          path: sdk-artifacts/*
+          if-no-files-found: error
   build:
     strategy:
       fail-fast: false
@@ -68,7 +104,7 @@ jobs:
       - name: Linux baseline dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
-      - run: node scripts/prepare-vendor.mjs
+      - run: node dev-tools/scripts/prepare-vendor.mjs
       - name: Bundle local Quick Download assets
         run: |
           pnpm --dir apps/desktop install --frozen-lockfile
@@ -90,7 +126,7 @@ jobs:
           pnpm --dir apps/desktop typecheck
           pnpm --dir apps/desktop lint
           pnpm --dir apps/desktop test
-          node --test packaging/tests/release.test.mjs
+          node --test dev-tools/test-suite/packaging/tests/release.test.mjs
       - name: Preserve dependency notices
         shell: bash
         run: |
@@ -184,7 +220,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:OKYTES_DESKTOP_FIXTURE = "$env:GITHUB_WORKSPACE/target/$env:TARGET/release/examples/desktop_fixture.exe"
           $installer = Get-ChildItem "target/$env:TARGET/release/bundle/nsis/*.exe" | Select-Object -First 1
-          ./packaging/windows/test-install.ps1 -Installer $installer.FullName -Destination "$env:GITHUB_WORKSPACE/.tools/nsis-installed"
+          ./dev-tools/test-suite/packaging/windows/test-install.ps1 -Installer $installer.FullName -Destination "$env:GITHUB_WORKSPACE/.tools/nsis-installed"
       - name: Dependency inventory and audit
         shell: bash
         run: |

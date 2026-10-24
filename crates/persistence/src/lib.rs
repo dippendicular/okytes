@@ -278,6 +278,69 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
         })
     }
 
+    /// Return a retained daemon idempotency result. A different digest for the
+    /// same owner, route and key is reported to the caller as a conflict.
+    pub fn idempotency_result(
+        &self,
+        owner: &str,
+        route: &str,
+        key: &str,
+        digest: &str,
+    ) -> Reply<Option<String>> {
+        let owner = owner.to_owned();
+        let route = route.to_owned();
+        let key = key.to_owned();
+        let digest = digest.to_owned();
+        self.call(move |conn| {
+            use rusqlite::OptionalExtension;
+            let cutoff = chrono::Utc::now().timestamp() - 86_400;
+            conn.execute("DELETE FROM api_idempotency WHERE created_at < ?1", [cutoff])
+                .map_err(db)?;
+            let stored: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT digest,response FROM api_idempotency WHERE owner=?1 AND route=?2 AND key=?3",
+                    params![owner, route, key],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(db)?;
+            match stored {
+                Some((stored_digest, response)) if stored_digest == digest => Ok(Some(response)),
+                Some(_) => Err(EngineError::Config("idempotency key conflicts with an earlier request".into())),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// Retain a successful creation response for 24 hours. The unique key is
+    /// scoped to the authenticated token owner and API route.
+    pub fn store_idempotency_result(
+        &self,
+        owner: &str,
+        route: &str,
+        key: &str,
+        digest: &str,
+        response: &str,
+    ) -> Reply<()> {
+        let values = (
+            owner.to_owned(),
+            route.to_owned(),
+            key.to_owned(),
+            digest.to_owned(),
+            response.to_owned(),
+        );
+        self.call(move |conn| {
+            if values.0.len() > 128 || values.1.len() > 64 || values.2.len() > 128 || values.3.len() > 128 || values.4.len() > 1_048_576 {
+                return Err(db("idempotency record exceeds size limit"));
+            }
+            conn.execute(
+                "INSERT INTO api_idempotency(owner,route,key,digest,response,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![values.0, values.1, values.2, values.3, values.4, chrono::Utc::now().timestamp()],
+            ).map_err(db)?;
+            Ok(())
+        })
+    }
+
     /// Open/migrate a database and launch its bounded writer.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, EngineError> {
         let path = path.as_ref().to_owned();
@@ -321,7 +384,9 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
                     CREATE TABLE IF NOT EXISTS peer_outbound(request_id TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(length(CAST(record AS BLOB))<=32768));
                     CREATE TABLE IF NOT EXISTS peer_inbound(request_id TEXT PRIMARY KEY,destination TEXT NOT NULL CHECK(length(CAST(destination AS BLOB))<=4096));
                     CREATE TABLE IF NOT EXISTS peer_failure(request_id TEXT PRIMARY KEY,message TEXT NOT NULL CHECK(length(CAST(message AS BLOB))<=512));
-                    CREATE TABLE IF NOT EXISTS peer_trust(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,certificate BLOB NOT NULL CHECK(length(certificate)<=4096),revision INTEGER NOT NULL,revoked INTEGER NOT NULL);").map_err(db)?;
+                    CREATE TABLE IF NOT EXISTS peer_trust(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,certificate BLOB NOT NULL CHECK(length(certificate)<=4096),revision INTEGER NOT NULL,revoked INTEGER NOT NULL);
+                    CREATE TABLE IF NOT EXISTS api_idempotency(owner TEXT NOT NULL,route TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,response TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(owner,route,key));
+                    CREATE INDEX IF NOT EXISTS api_idempotency_expiry ON api_idempotency(created_at);").map_err(db)?;
                 Ok(conn)
             })();
             match conn {

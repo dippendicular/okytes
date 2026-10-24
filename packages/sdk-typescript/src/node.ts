@@ -6,6 +6,7 @@ export interface ClientOptions {
   token: TokenProvider;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
+  maxRetries?: number;
 }
 
 type ApiError = components["schemas"]["ApiError"];
@@ -32,6 +33,7 @@ export class OkytesClient {
   private readonly endpoint: URL;
   private readonly transport: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly maxRetries: number;
 
   constructor(private readonly options: ClientOptions) {
     this.endpoint = new URL(options.endpoint);
@@ -47,6 +49,7 @@ export class OkytesClient {
     ) throw new OkytesError("invalid_endpoint", "validation", false, "Use loopback HTTP or verified HTTPS.");
     this.transport = options.fetch ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs ?? 15_000;
+    this.maxRetries = options.maxRetries ?? 3;
   }
 
   private async token(): Promise<string> {
@@ -56,7 +59,8 @@ export class OkytesClient {
     return value;
   }
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async request<T>(path: string, init: RequestInit = {}, idempotencyKey?: string): Promise<T> {
+    for (let attempt = 0;; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -68,22 +72,27 @@ export class OkytesClient {
           Authorization: `Bearer ${await this.token()}`,
           ...(init.body ? { "Content-Type": "application/json" } : {}),
           ...init.headers,
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
         },
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as ApiError | null;
-        throw new OkytesError(
+        const error = new OkytesError(
           body?.error ?? "request_failed",
           body?.category ?? "internal",
           body?.retryable ?? response.status >= 500,
           body?.message ?? `Okytes request failed (${response.status}).`,
           response.status,
         );
+        if (!error.retryable || attempt >= this.maxRetries || init.signal?.aborted) throw error;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(250 * 2 ** attempt, 10_000) * (0.5 + Math.random())));
+        continue;
       }
       if (response.status === 204 || response.headers.get("content-length") === "0") return undefined as T;
       return (await response.json()) as T;
     } finally {
       clearTimeout(timeout);
+    }
     }
   }
 
@@ -91,7 +100,15 @@ export class OkytesClient {
   jobs = (offset = 0) => this.request<Snapshot>(`v1/jobs?offset=${offset}`);
   job = (id: string) => this.request<Job>(`v1/jobs/${encodeURIComponent(id)}`);
   add = (input: components["schemas"]["AddInput"]) =>
-    this.request<string[]>("v1/jobs", { method: "POST", body: JSON.stringify(input) });
+    this.request<string[]>("v1/jobs", { method: "POST", body: JSON.stringify(input) }, crypto.randomUUID());
+  download = (input: components["schemas"]["Submit"], idempotencyKey = crypto.randomUUID()) =>
+    this.request<string>("v1/submit", { method: "POST", body: JSON.stringify(input) }, idempotencyKey);
+  inspectMedia = (url: string) => this.request<components["schemas"]["MediaChoice"][]>("v1/media/inspect", { method: "POST", body: JSON.stringify(url) });
+  inspectTorrent = (input: components["schemas"]["TorrentInput"]) => this.request<components["schemas"]["TorrentMetadata"]>("v1/torrents/inspect", { method: "POST", body: JSON.stringify(input) });
+  addTorrent = (input: components["schemas"]["TorrentInput"], idempotencyKey = crypto.randomUUID()) => this.request<string>("v1/torrents", { method: "POST", body: JSON.stringify(input) }, idempotencyKey);
+  torrent = (id: string) => this.request<components["schemas"]["TorrentSnapshot"]>(`v1/torrents/${encodeURIComponent(id)}`);
+  authorizeFile = (id: string, credentials: components["schemas"]["FileCredentials"]) => this.request<void>(`v1/jobs/${encodeURIComponent(id)}/credentials`, { method: "POST", body: JSON.stringify(credentials) });
+  sendToPeer = (input: components["schemas"]["PeerSend"]) => this.request<string>("v1/peers/send", { method: "POST", body: JSON.stringify(input) }, crypto.randomUUID());
   control = (id: string, action: Action) =>
     this.request<void>(`v1/jobs/${encodeURIComponent(id)}/control`, { method: "POST", body: JSON.stringify(action) });
 

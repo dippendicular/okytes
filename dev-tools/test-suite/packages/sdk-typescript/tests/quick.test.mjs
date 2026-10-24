@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createQuick } from "../dist/index.js";
+import { createQuick } from "../../../../../packages/sdk-typescript/dist/index.js";
 
 test("Quick browser requests keep proof in memory and never use a native bearer or URL credential", async () => {
   const calls = [];

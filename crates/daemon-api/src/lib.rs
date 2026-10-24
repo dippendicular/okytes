@@ -3,5 +3,5 @@
 pub mod client;
 pub mod contract;
 mod quick;
-pub use client::Client;
+pub use client::{Client, DaemonError};
 pub use quick::open_quick;

@@ -3369,14 +3369,28 @@
           "protocols",
           "event_delivery",
           "max_page_size",
-          "max_batch_size"
+          "max_batch_size",
+          "idempotency_retention_seconds",
+          "destination_semantics",
+          "credential_policy"
         ],
         "properties": {
           "api_version": {
             "type": "string"
           },
+          "credential_policy": {
+            "type": "string"
+          },
+          "destination_semantics": {
+            "type": "string"
+          },
           "event_delivery": {
             "type": "string"
+          },
+          "idempotency_retention_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "max_batch_size": {
             "type": "integer",
@@ -4525,6 +4539,12 @@
         "properties": {
           "approval_required": {
             "type": "boolean"
+          },
+          "credential_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "integrity": {
             "type": "boolean"
