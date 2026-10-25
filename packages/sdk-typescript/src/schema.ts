@@ -524,7 +524,11 @@ export interface components {
         };
         Capabilities: {
             api_version: string;
+            credential_policy: string;
+            destination_semantics: string;
             event_delivery: string;
+            /** Format: int32 */
+            idempotency_retention_seconds: number;
             /** Format: int32 */
             max_batch_size: number;
             /** Format: int32 */
@@ -996,6 +1000,7 @@ export interface components {
         };
         ProtocolCapability: {
             approval_required: boolean;
+            credential_kind?: string | null;
             integrity: boolean;
             operations: string[];
             protocol: string;

@@ -21,6 +21,11 @@ pub struct EngineConfig {
     pub state_directory: PathBuf,
     pub destination: PathBuf,
     pub concurrency: u32,
+    pub max_retries: u32,
+    pub connect_timeout: Duration,
+    pub read_timeout: Duration,
+    pub global_rate_bps: Option<u64>,
+    pub per_transfer_rate_bps: Option<u64>,
     pub shutdown_timeout: Duration,
 }
 
@@ -30,6 +35,11 @@ impl EngineConfig {
             state_directory: state_directory.into(),
             destination: destination.into(),
             concurrency: 4,
+            max_retries: 10,
+            connect_timeout: Duration::from_secs(30),
+            read_timeout: Duration::from_secs(60),
+            global_rate_bps: None,
+            per_transfer_rate_bps: None,
             shutdown_timeout: Duration::from_secs(30),
         }
     }
@@ -39,6 +49,20 @@ impl EngineConfig {
     }
     pub fn shutdown_timeout(mut self, value: Duration) -> Self {
         self.shutdown_timeout = value;
+        self
+    }
+    pub fn retries(mut self, value: u32) -> Self {
+        self.max_retries = value;
+        self
+    }
+    pub fn timeouts(mut self, connect: Duration, read: Duration) -> Self {
+        self.connect_timeout = connect;
+        self.read_timeout = read;
+        self
+    }
+    pub fn rate_limits(mut self, global_bps: Option<u64>, per_transfer_bps: Option<u64>) -> Self {
+        self.global_rate_bps = global_bps;
+        self.per_transfer_rate_bps = per_transfer_bps;
         self
     }
 }
@@ -119,6 +143,7 @@ pub struct TransferResult {
     pub protocol: String,
     pub bytes: u64,
     pub expected_sha256: Option<String>,
+    pub integrity_verified: bool,
     pub remote_identity: Option<String>,
 }
 
@@ -176,7 +201,11 @@ impl EmbeddedEngine {
         }
         std::fs::create_dir_all(&config.state_directory)
             .map_err(|error| Error::InvalidConfiguration(error.to_string()))?;
-        if !(1..=32).contains(&config.concurrency) || config.shutdown_timeout.is_zero() {
+        if !(1..=32).contains(&config.concurrency)
+            || config.shutdown_timeout.is_zero()
+            || config.connect_timeout.as_secs() == 0
+            || config.read_timeout.as_secs() == 0
+        {
             return Err(Error::InvalidConfiguration(
                 "concurrency must be 1..=32 and shutdown timeout must be positive".into(),
             ));
@@ -187,9 +216,17 @@ impl EmbeddedEngine {
         )
         .await
         .map_err(map)?;
-        let mut settings = session.settings().await.map_err(map)?;
-        settings.concurrency = config.concurrency;
-        session.set_settings(settings).await.map_err(map)?;
+        let mut engine_config = session.configuration().await.map_err(map)?;
+        engine_config.max_concurrent_jobs = config.concurrency as usize;
+        engine_config.max_retries = config.max_retries;
+        engine_config.connect_timeout_secs = config.connect_timeout.as_secs();
+        engine_config.read_timeout_secs = config.read_timeout.as_secs();
+        engine_config.traffic.global_bps = config.global_rate_bps;
+        engine_config.traffic.per_job_bps = config.per_transfer_rate_bps;
+        session
+            .set_configuration(engine_config)
+            .await
+            .map_err(map)?;
         Ok(Self {
             session,
             shutdown_timeout: config.shutdown_timeout,
@@ -320,6 +357,7 @@ impl TransferHandle {
                     protocol: job.protocol,
                     bytes: job.bytes as u64,
                     expected_sha256: self.expected_sha256.clone(),
+                    integrity_verified: self.expected_sha256.is_some(),
                     remote_identity: job.etag,
                 });
             }

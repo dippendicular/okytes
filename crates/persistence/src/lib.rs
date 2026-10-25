@@ -305,10 +305,62 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
                 .optional()
                 .map_err(db)?;
             match stored {
+                Some((stored_digest, response)) if stored_digest == digest && response.is_empty() => {
+                    Err(EngineError::Scheduler("idempotency request is still pending".into()))
+                }
                 Some((stored_digest, response)) if stored_digest == digest => Ok(Some(response)),
                 Some(_) => Err(EngineError::Config("idempotency key conflicts with an earlier request".into())),
                 None => Ok(None),
             }
+        })
+    }
+
+    /// Durably reserve a key before the transfer is admitted. A process crash
+    /// leaves a bounded pending record, preventing an ambiguous retry from
+    /// creating a second job.
+    pub fn reserve_idempotency(
+        &self,
+        owner: &str,
+        route: &str,
+        key: &str,
+        digest: &str,
+    ) -> Reply<()> {
+        let values = (
+            owner.to_owned(),
+            route.to_owned(),
+            key.to_owned(),
+            digest.to_owned(),
+        );
+        self.call(move |conn| {
+            conn.execute(
+                "INSERT INTO api_idempotency(owner,route,key,digest,response,created_at) VALUES(?1,?2,?3,?4,'',?5)",
+                params![values.0, values.1, values.2, values.3, chrono::Utc::now().timestamp()],
+            ).map_err(db)?;
+            Ok(())
+        })
+    }
+
+    /// Remove a reservation after a known admission failure. Ambiguous process
+    /// termination cannot call this path, so its reservation remains protective.
+    pub fn release_idempotency(
+        &self,
+        owner: &str,
+        route: &str,
+        key: &str,
+        digest: &str,
+    ) -> Reply<()> {
+        let values = (
+            owner.to_owned(),
+            route.to_owned(),
+            key.to_owned(),
+            digest.to_owned(),
+        );
+        self.call(move |conn| {
+            conn.execute(
+                "DELETE FROM api_idempotency WHERE owner=?1 AND route=?2 AND key=?3 AND digest=?4 AND response=''",
+                params![values.0, values.1, values.2, values.3],
+            ).map_err(db)?;
+            Ok(())
         })
     }
 
@@ -333,10 +385,11 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
             if values.0.len() > 128 || values.1.len() > 64 || values.2.len() > 128 || values.3.len() > 128 || values.4.len() > 1_048_576 {
                 return Err(db("idempotency record exceeds size limit"));
             }
-            conn.execute(
-                "INSERT INTO api_idempotency(owner,route,key,digest,response,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+            let changed = conn.execute(
+                "UPDATE api_idempotency SET response=?5,created_at=?6 WHERE owner=?1 AND route=?2 AND key=?3 AND digest=?4",
                 params![values.0, values.1, values.2, values.3, values.4, chrono::Utc::now().timestamp()],
             ).map_err(db)?;
+            if changed != 1 { return Err(db("idempotency reservation is missing")); }
             Ok(())
         })
     }

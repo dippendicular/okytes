@@ -70,6 +70,9 @@ class OkytesClient:
             await asyncio.sleep(min(0.25 * 2 ** attempt, 10.0) * (0.5 + (uuid.uuid4().int % 1000) / 1000))
 
     async def capabilities(self) -> Capabilities: return Capabilities.from_json(await self._request("v1/capabilities"))
+    async def supports(self, protocol: str, operation: str) -> bool:
+        capabilities = await self.capabilities()
+        return any(item.protocol == protocol and operation in item.operations for item in capabilities.protocols)
     async def jobs(self, offset: int = 0) -> Snapshot: return Snapshot.from_json(await self._request(f"v1/jobs?offset={offset}"))
     async def job(self, transfer_id: str) -> Job: return Job.from_json(await self._request(f"v1/jobs/{urllib.parse.quote(transfer_id)}"))
     async def add(self, urls: list[str], destination: str | None = None, allow_duplicates: bool = False) -> list[str]:
@@ -97,9 +100,12 @@ class OkytesClient:
 
     async def events(self) -> AsyncIterator[Update]:
         delay = 0.25
+        cursor: str | None = None
         while not self._closed:
             token = await self._token()
-            request = urllib.request.Request(urllib.parse.urljoin(self._endpoint, "v1/events"), headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"})
+            headers = {"Authorization": f"Bearer {token}", "Accept": "text/event-stream"}
+            if cursor is not None: headers["Last-Event-ID"] = cursor
+            request = urllib.request.Request(urllib.parse.urljoin(self._endpoint, "v1/events"), headers=headers)
             try:
                 response = await asyncio.to_thread(urllib.request.urlopen, request, None, 3600, context=ssl.create_default_context())
                 try:
@@ -110,6 +116,7 @@ class OkytesClient:
                         if not line: break
                         text = line.decode("utf-8").rstrip("\r\n")
                         if text.startswith("data:"): data.append(text[5:].lstrip())
+                        elif text.startswith("id:"): cursor = text[3:].strip()
                         elif not text and data:
                             item = json.loads("\n".join(data)); data.clear()
                             yield Update(item["kind"], item.get("value"))

@@ -13,4 +13,6 @@ const client = new OkytesClient({
 console.log(await client.capabilities());
 ```
 
-Plain HTTP is restricted to loopback. Use verified HTTPS for remote access. A destination path always refers to the daemon host.
+Use `download`, `add`, `inspectMedia`, `inspectTorrent`, `addTorrent`, `authorizeFile`, and `sendToPeer` for high-level operations. Check `supports(protocol, operation)` before optional protocol calls. Creation calls use durable idempotency keys, retry only retryable failures with bounded backoff, and the event iterator reconnects with its last SSE cursor before emitting `Resync`.
+
+Plain HTTP is restricted to loopback. Use verified HTTPS for remote access. A destination path always refers to the daemon host. FTP/SFTP credentials remain request-local; SFTP requires a confirmed host-key fingerprint. LAN operations require an already paired and approved device.

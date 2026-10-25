@@ -69,6 +69,7 @@ pub struct Api {
     subscribers: Arc<Semaphore>,
     peer_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     idempotency: Mutex<()>,
+    event_cursor: std::sync::atomic::AtomicU64,
 }
 impl Api {
     /// Open the real service and separate hashed credential registry.
@@ -126,6 +127,7 @@ impl Api {
             subscribers: Arc::new(Semaphore::new(16)),
             peer_tasks: Mutex::new(Vec::new()),
             idempotency: Mutex::new(()),
+            event_cursor: std::sync::atomic::AtomicU64::new(1),
         }))
     }
     /// Reject new requests before draining durable engine writes.
@@ -1002,7 +1004,22 @@ fn request_digest(value: &impl Serialize) -> Result<String, Response> {
 }
 
 fn idempotency_rejection(cause: impl std::fmt::Display) -> Response {
-    if cause.to_string().contains("idempotency key conflicts") {
+    if cause
+        .to_string()
+        .contains("idempotency request is still pending")
+    {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError {
+                error: "idempotency_pending".into(),
+                category: ErrorCategory::Unavailable,
+                retryable: true,
+                message: "The original request may still be committing; retry the same key later."
+                    .into(),
+            }),
+        )
+            .into_response()
+    } else if cause.to_string().contains("idempotency key conflicts") {
         (
             StatusCode::CONFLICT,
             Json(ApiError {
@@ -1054,14 +1071,27 @@ async fn add(
         {
             return serde_json::from_str(&response).map(Json).map_err(rejection);
         }
+        api.peer_store
+            .reserve_idempotency(&info.id, "jobs", key, &digest)
+            .await
+            .map_err(idempotency_rejection)?;
     }
-    let result = api.session.add(input).await.map_err(|cause| {
-        if cause.to_string().contains("duplicate") {
-            error(StatusCode::CONFLICT, "duplicate_url")
-        } else {
-            rejection(cause)
+    let result = match api.session.add(input).await {
+        Ok(result) => result,
+        Err(cause) => {
+            if let Some(key) = key.as_deref() {
+                let _ = api
+                    .peer_store
+                    .release_idempotency(&info.id, "jobs", key, &digest)
+                    .await;
+            }
+            return Err(if cause.to_string().contains("duplicate") {
+                error(StatusCode::CONFLICT, "duplicate_url")
+            } else {
+                rejection(cause)
+            });
         }
-    })?;
+    };
     if let Some(key) = key.as_deref() {
         let response = serde_json::to_string(&result).map_err(rejection)?;
         api.peer_store
@@ -1091,8 +1121,23 @@ async fn submit(
         {
             return serde_json::from_str(&response).map(Json).map_err(rejection);
         }
+        api.peer_store
+            .reserve_idempotency(&info.id, "submit", key, &digest)
+            .await
+            .map_err(idempotency_rejection)?;
     }
-    let result = api.session.submit(input).await.map_err(rejection)?;
+    let result = match api.session.submit(input).await {
+        Ok(result) => result,
+        Err(cause) => {
+            if let Some(key) = key.as_deref() {
+                let _ = api
+                    .peer_store
+                    .release_idempotency(&info.id, "submit", key, &digest)
+                    .await;
+            }
+            return Err(rejection(cause));
+        }
+    };
     if let Some(key) = key.as_deref() {
         let response = serde_json::to_string(&result).map_err(rejection)?;
         api.peer_store
@@ -1236,13 +1281,19 @@ async fn events(
         .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, "subscriber_limit"))?;
     let receiver = api.session.subscribe().await.map_err(rejection)?;
     let browser = browser.is_some();
-    let stream =
-        updates(receiver, permit, api, info.id, browser).filter_map(move |update| async move {
+    let cursor_api = api.clone();
+    let stream = updates(receiver, permit, api, info.id, browser).filter_map(move |update| {
+        let cursor_api = cursor_api.clone();
+        async move {
             let update = if browser { Update::Resync } else { update };
-            serde_json::to_string(&update)
-                .ok()
-                .map(|value| Ok(Event::default().data(value)))
-        });
+            serde_json::to_string(&update).ok().map(|value| {
+                let cursor = cursor_api
+                    .event_cursor
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(Event::default().id(cursor.to_string()).data(value))
+            })
+        }
+    });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10))))
 }
 fn updates(
@@ -1496,8 +1547,23 @@ async fn add_torrent(
         {
             return serde_json::from_str(&response).map(Json).map_err(rejection);
         }
+        api.peer_store
+            .reserve_idempotency(&info.id, "torrents", key, &digest)
+            .await
+            .map_err(idempotency_rejection)?;
     }
-    let result = api.session.add_torrent(input).await.map_err(rejection)?;
+    let result = match api.session.add_torrent(input).await {
+        Ok(result) => result,
+        Err(cause) => {
+            if let Some(key) = key.as_deref() {
+                let _ = api
+                    .peer_store
+                    .release_idempotency(&info.id, "torrents", key, &digest)
+                    .await;
+            }
+            return Err(rejection(cause));
+        }
+    };
     if let Some(key) = key.as_deref() {
         let response = serde_json::to_string(&result).map_err(rejection)?;
         api.peer_store

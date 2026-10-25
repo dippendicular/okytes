@@ -301,20 +301,87 @@ impl Client {
         self.request(Method::POST, "v1/capture", Some(&request))
             .await
     }
-    async fn events(&self) -> EngineResult<reqwest::Response> {
-        let response = self
+    async fn events(&self, cursor: Option<&str>) -> EngineResult<reqwest::Response> {
+        let mut request = self
             .http
             .get(self.base.join("v1/events").map_err(|_| invalid())?)
             .bearer_auth(&self.token)
-            .timeout(Duration::from_secs(3600))
-            .send()
-            .await
-            .map_err(|_| invalid())?;
+            .timeout(Duration::from_secs(3600));
+        if let Some(cursor) = cursor {
+            request = request.header("Last-Event-ID", cursor);
+        }
+        let response = request.send().await.map_err(|_| invalid())?;
         if response.status().is_success() {
             Ok(response)
         } else {
             Err(invalid())
         }
+    }
+
+    /// Subscribe to bounded contract updates. `Resync` is authoritative: the
+    /// caller must replace cached jobs with a fresh snapshot. SSE cursors are
+    /// retained across reconnects and backoff is capped at ten seconds.
+    pub async fn updates(&self) -> EngineResult<tokio::sync::mpsc::Receiver<Update>> {
+        let first = self.events(None).await?;
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let client = self.clone();
+        tokio::spawn(async move {
+            let mut response = Some(first);
+            let mut cursor: Option<String> = None;
+            let mut delay = Duration::from_millis(250);
+            loop {
+                let Some(current) = response.take() else {
+                    return;
+                };
+                let mut stream = current.bytes_stream();
+                let mut pending = Vec::new();
+                while let Some(Ok(chunk)) = stream.next().await {
+                    if tx.is_closed() || pending.len() + chunk.len() > 131_072 {
+                        return;
+                    }
+                    pending.extend_from_slice(&chunk);
+                    while let Some(end) = pending.windows(2).position(|pair| pair == b"\n\n") {
+                        let frame: Vec<_> = pending.drain(..end + 2).collect();
+                        if let Some(line) = frame
+                            .split(|byte| *byte == b'\n')
+                            .find(|line| line.starts_with(b"id:"))
+                        {
+                            cursor = std::str::from_utf8(&line[3..])
+                                .ok()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_owned);
+                        }
+                        let data = frame.split(|byte| *byte == b'\n').find_map(|line| {
+                            line.strip_prefix(b"data: ")
+                                .or_else(|| line.strip_prefix(b"data:"))
+                        });
+                        if let Some(Ok(update)) = data.map(serde_json::from_slice::<Update>) {
+                            if tx.send(update).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                if tx.is_closed() {
+                    return;
+                }
+                let _ = tx.send(Update::Resync).await;
+                loop {
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(Duration::from_secs(10));
+                    if tx.is_closed() {
+                        return;
+                    }
+                    if let Ok(next) = client.events(cursor.as_deref()).await {
+                        response = Some(next);
+                        delay = Duration::from_millis(250);
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(rx)
     }
 }
 impl DesktopService for Client {
@@ -387,11 +454,12 @@ impl DesktopService for Client {
     }
     fn subscribe(&self) -> Reply<'_, tokio::sync::broadcast::Receiver<EngineEvent>> {
         Box::pin(async move {
-            let response = self.events().await?;
+            let response = self.events(None).await?;
             let (tx, rx) = tokio::sync::broadcast::channel(64);
             let client = self.clone();
             tokio::spawn(async move {
                 let mut response = response;
+                let mut cursor: Option<String> = None;
                 loop {
                     let mut stream = response.bytes_stream();
                     let mut pending = Vec::new();
@@ -402,6 +470,16 @@ impl DesktopService for Client {
                         pending.extend_from_slice(&chunk);
                         while let Some(end) = pending.windows(2).position(|pair| pair == b"\n\n") {
                             let frame: Vec<_> = pending.drain(..end + 2).collect();
+                            if let Some(line) = frame
+                                .split(|byte| *byte == b'\n')
+                                .find(|line| line.starts_with(b"id:"))
+                            {
+                                cursor = std::str::from_utf8(&line[3..])
+                                    .ok()
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(str::to_owned);
+                            }
                             if !frame.starts_with(b"data:") {
                                 continue;
                             }
@@ -425,7 +503,7 @@ impl DesktopService for Client {
                         if tx.receiver_count() == 0 {
                             return;
                         }
-                        if let Ok(next) = client.events().await {
+                        if let Ok(next) = client.events(cursor.as_deref()).await {
                             response = next;
                             break;
                         }

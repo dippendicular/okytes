@@ -13,4 +13,6 @@ engine.shutdown().await?;
 # Ok(()) }
 ```
 
-`DownloadRequest` accepts implemented HTTP/HTTPS, FTP/FTPS/SFTP and supported media URLs through the existing service boundary. Credentials remain memory-only. LAN peer execution remains daemon-owned because it requires an authenticated listener and receiver approval. `DaemonClient` is the distinct remote type; call `capabilities()` and use only advertised protocols.
+`EngineConfig` controls concurrency, retries, connection/read timeouts, global and per-transfer rate limits, and bounded graceful shutdown. `DownloadRequest::ftp` and `DownloadRequest::sftp` make credential and host-key requirements explicit. Torrent submission/inspection and media inspection have separate typed methods. Completed handles return `TransferResult` with destination, protocol, durable bytes, expected SHA-256 verification state and remote identity metadata.
+
+Credentials remain memory-only. LAN peer execution remains daemon-owned because it requires an authenticated listener and receiver approval. `DaemonClient` is the distinct lightweight remote type; call `capabilities()` and use only advertised protocols. `request_sdk` preserves structured daemon errors and `updates` exposes cursor-aware `Changed`/`Resync` events.

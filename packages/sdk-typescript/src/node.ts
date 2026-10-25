@@ -97,6 +97,10 @@ export class OkytesClient {
   }
 
   capabilities = () => this.request<Capabilities>("v1/capabilities");
+  async supports(protocol: string, operation: string): Promise<boolean> {
+    const capabilities = await this.capabilities();
+    return capabilities.protocols.some((item) => item.protocol === protocol && item.operations.includes(operation));
+  }
   jobs = (offset = 0) => this.request<Snapshot>(`v1/jobs?offset=${offset}`);
   job = (id: string) => this.request<Job>(`v1/jobs/${encodeURIComponent(id)}`);
   add = (input: components["schemas"]["AddInput"]) =>
@@ -114,10 +118,11 @@ export class OkytesClient {
 
   async *events(signal?: AbortSignal): AsyncGenerator<Update> {
     let delay = 250;
+    let cursor: string | undefined;
     while (!signal?.aborted) {
       try {
         const response = await this.transport(new URL("v1/events", this.endpoint), {
-          headers: { Authorization: `Bearer ${await this.token()}` },
+          headers: { Authorization: `Bearer ${await this.token()}`, ...(cursor ? { "Last-Event-ID": cursor } : {}) },
           redirect: "error",
           signal,
         });
@@ -135,6 +140,8 @@ export class OkytesClient {
             while ((end = pending.indexOf("\n\n")) >= 0) {
               const frame = pending.slice(0, end);
               pending = pending.slice(end + 2);
+              const id = frame.split("\n").find((line) => line.startsWith("id:"))?.slice(3).trim();
+              if (id) cursor = id;
               const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
               if (data) yield JSON.parse(data) as Update;
             }
