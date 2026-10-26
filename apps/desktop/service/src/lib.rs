@@ -59,6 +59,28 @@ fn id(value: &str) -> EngineResult<JobId> {
     Uuid::parse_str(value).map_err(|_| invalid("invalid job ID"))
 }
 
+fn organized_destination(root: &str, url: &url::Url) -> PathBuf {
+    let name = url
+        .path_segments()
+        .and_then(Iterator::last)
+        .unwrap_or_default();
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let folder = match extension.as_str() {
+        "mp4" | "mkv" | "webm" | "mov" | "avi" => "Video",
+        "mp3" | "flac" | "wav" | "ogg" | "m4a" => "Music",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "Images",
+        "zip" | "rar" | "7z" | "gz" | "tar" | "bz2" | "xz" => "Archives",
+        "pdf" | "doc" | "docx" | "txt" | "epub" | "csv" | "xlsx" | "pptx" => "Documents",
+        "exe" | "msi" | "dmg" | "pkg" | "deb" | "rpm" | "appimage" => "Programs",
+        _ => "Other",
+    };
+    PathBuf::from(root).join("Okytes").join(folder)
+}
+
 impl Session {
     /// Clone the handle to this session's single serialized profile writer for
     /// protocol adapters owned by the same process.
@@ -180,12 +202,13 @@ impl Session {
             }
             return Err(invalid("request ID collision"));
         }
+        let source = url::Url::parse(&capture.url).map_err(|_| invalid("invalid source"))?;
         let result = self
             .engine
             .add_captured(
                 DownloadRequest {
-                    url: url::Url::parse(&capture.url).map_err(|_| invalid("invalid source"))?,
-                    output_dir: PathBuf::from(&queue.settings.destination),
+                    output_dir: organized_destination(&queue.settings.destination, &source),
+                    url: source,
                     filename: capture.filename,
                     expected_hash: capture.sha256,
                     conflict_strategy: ConflictStrategy::Rename,
@@ -223,6 +246,12 @@ impl Session {
         config.database_path = database.into();
         // Desktop admission is independently adjustable up to 32; transport caps remain global.
         config.max_concurrent_jobs = 32;
+        config.max_segments_per_job = 12;
+        config.max_connections_per_origin = 8;
+        config.connect_timeout_secs = config.connect_timeout_secs.min(10);
+        config.read_timeout_secs = config.read_timeout_secs.min(30);
+        config.max_retries = config.max_retries.min(4);
+        config.retry_max_delay_ms = config.retry_max_delay_ms.min(10_000);
         config.traffic = settings.traffic.clone();
         let media = okytes_transport_media::MediaTransport::new(Arc::new(
             HttpTransport::new(&config).map_err(|e| invalid(e.to_string()))?,
@@ -319,6 +348,8 @@ impl Session {
                 .unwrap_or_default(),
             url: job.url.to_string(),
             destination: job.output_path.to_string_lossy().into(),
+            created_at: job.created_at.to_rfc3339(),
+            updated_at: job.updated_at.to_rfc3339(),
             state: if job.protocol == "torrent"
                 && job.state == JobState::Completed
                 && self.torrent.is_seeding(id)?
@@ -529,13 +560,14 @@ impl DesktopService for Session {
             if queue.stopping {
                 return Err(invalid("service is shutting down"));
             }
-            let destination = input
-                .destination
-                .unwrap_or_else(|| queue.settings.destination.clone());
-            if destination.len() > 4096 || !Path::new(&destination).is_absolute() {
+            let requested_destination = input.destination;
+            let url = url::Url::parse(&input.url).map_err(|_| invalid("invalid source URL"))?;
+            let destination = requested_destination
+                .map(PathBuf::from)
+                .unwrap_or_else(|| organized_destination(&queue.settings.destination, &url));
+            if destination.to_string_lossy().len() > 4096 || !destination.is_absolute() {
                 return Err(invalid("absolute destination required"));
             }
-            let url = url::Url::parse(&input.url).map_err(|_| invalid("invalid source URL"))?;
             if input.filename.as_ref().is_some_and(|name| {
                 name.len() > 200 || name != &okytes_core::engine::sanitize(name)
             }) {
@@ -558,7 +590,7 @@ impl DesktopService for Session {
                 .engine
                 .add(DownloadRequest {
                     url,
-                    output_dir: PathBuf::from(destination),
+                    output_dir: destination,
                     filename: input.filename,
                     expected_hash: input.sha256,
                     conflict_strategy,
@@ -611,12 +643,7 @@ impl DesktopService for Session {
                 return Err(invalid("import must contain 1–100 URLs"));
             }
             let mut queue = self.queue.lock().await;
-            let destination = input
-                .destination
-                .unwrap_or_else(|| queue.settings.destination.clone());
-            if destination.len() > 4096 || !Path::new(&destination).is_absolute() {
-                return Err(invalid("choose an absolute destination directory"));
-            }
+            let requested_destination = input.destination;
             let urls: Vec<url::Url> = input
                 .urls
                 .iter()
@@ -667,11 +694,18 @@ impl DesktopService for Session {
             }
             let mut ids = Vec::new();
             for url in urls {
+                let destination = requested_destination
+                    .as_deref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| organized_destination(&queue.settings.destination, &url));
+                if destination.to_string_lossy().len() > 4096 || !destination.is_absolute() {
+                    return Err(invalid("choose an absolute destination directory"));
+                }
                 ids.push(
                     self.engine
                         .add(DownloadRequest {
                             url,
-                            output_dir: PathBuf::from(&destination),
+                            output_dir: destination,
                             filename: None,
                             expected_hash: None,
                             conflict_strategy: ConflictStrategy::Rename,
@@ -786,6 +820,36 @@ impl DesktopService for Session {
                 }
                 Action::Remove => {
                     self.stop(&job, &mut queue, true).await?;
+                    self.store.delete_job(id).await?;
+                    queue.samples.remove(&id);
+                }
+                Action::RemoveFiles => {
+                    self.stop(&job, &mut queue, true).await?;
+                    match tokio::fs::symlink_metadata(&job.output_path).await {
+                        Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_file() => {
+                            tokio::fs::remove_file(&job.output_path)
+                                .await
+                                .map_err(|e| {
+                                    invalid(format!("cannot remove downloaded file: {e}"))
+                                })?;
+                        }
+                        Ok(metadata) if metadata.is_dir() => {
+                            tokio::fs::remove_dir_all(&job.output_path)
+                                .await
+                                .map_err(|e| {
+                                    invalid(format!("cannot remove downloaded folder: {e}"))
+                                })?;
+                        }
+                        Ok(_) => {
+                            return Err(invalid(
+                                "downloaded item has an unsupported filesystem type",
+                            ))
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(invalid(format!("cannot inspect downloaded item: {error}")))
+                        }
+                    }
                     self.store.delete_job(id).await?;
                     queue.samples.remove(&id);
                 }

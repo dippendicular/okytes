@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: |
             apps/desktop/pnpm-lock.yaml
             extensions/pnpm-lock.yaml
-            packages/sdk-typescript/pnpm-lock.yaml
+            dev-tools/sdk/packages/sdk-typescript/pnpm-lock.yaml
       - name: Linux desktop libraries
         # vendor stays private/ignored; reconstruct the reviewed patch set.
         if: runner.os == 'Linux'
@@ -86,12 +86,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo test -p okytes-daemon --test contract --locked
-          pnpm --dir packages/sdk-typescript install --frozen-lockfile
-          pnpm --dir packages/sdk-typescript generate
-          git diff --exit-code -- packages/sdk-typescript/src/schema.ts
-          pnpm --dir packages/sdk-typescript typecheck
-          pnpm --dir packages/sdk-typescript build
-          pnpm --dir packages/sdk-typescript test
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript install --frozen-lockfile
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript generate
+          git diff --exit-code -- dev-tools/sdk/packages/sdk-typescript/src/schema.ts
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript typecheck
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript build
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript test
           cargo test -p okytes-daemon --test sdk --locked -- --ignored
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
         if: runner.os == 'Linux'
@@ -114,7 +114,7 @@ jobs:
           cache-dependency-path: |
             apps/desktop/pnpm-lock.yaml
             extensions/pnpm-lock.yaml
-            packages/sdk-typescript/pnpm-lock.yaml
+            dev-tools/sdk/packages/sdk-typescript/pnpm-lock.yaml
       - uses: Swatinem/rust-cache@v2
         with:
           key: stress
@@ -143,7 +143,7 @@ jobs:
           cache-dependency-path: |
             apps/desktop/pnpm-lock.yaml
             extensions/pnpm-lock.yaml
-            packages/sdk-typescript/pnpm-lock.yaml
+            dev-tools/sdk/packages/sdk-typescript/pnpm-lock.yaml
       - uses: Swatinem/rust-cache@v2
         with:
           key: quick-browser

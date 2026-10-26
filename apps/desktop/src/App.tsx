@@ -25,6 +25,28 @@ const views = [
   "Completed",
   "Failed",
 ] as const;
+type SortKey = "latest" | "name" | "progress";
+
+function friendlyError(value: unknown): string {
+  const raw = String(value).replace(/^Error:\s*/i, "");
+  if (/duplicate URL/i.test(raw)) return "Duplicate download found.";
+  if (/dns|name resolution|failed to lookup/i.test(raw)) return "The server name could not be found. Check the address and your connection.";
+  if (/certificate|tls|ssl/i.test(raw)) return "The server's security certificate could not be verified.";
+  if (/timed? out|timeout/i.test(raw)) return "The server did not respond in time. Okytes will retry when appropriate.";
+  if (/connection refused/i.test(raw)) return "The server refused the connection. It may be offline or blocking downloads.";
+  if (/error sending request|request failed|connection/i.test(raw)) return "Could not connect to the download server. Check the URL, internet connection, firewall, or server availability.";
+  if (/403|forbidden/i.test(raw)) return "The server denied this download. The link may need permission or may have expired.";
+  if (/404|not found/i.test(raw)) return "The file is no longer available at this address.";
+  if (/disk|space|filesystem|permission/i.test(raw)) return `Storage problem: ${raw}`;
+  return raw;
+}
+
+function elapsed(job: Job): string {
+  const seconds = Math.max(0, Math.round((Date.parse(job.updated_at) - Date.parse(job.created_at)) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
 
 function Modal({
   title,
@@ -83,6 +105,11 @@ export function App() {
   const [urls, setUrls] = useState("");
   const [destination, setDestination] = useState("");
   const [duplicates, setDuplicates] = useState(false);
+  const [organize, setOrganize] = useState(true);
+  const [sort, setSort] = useState<SortKey>("latest");
+  const [removeJob, setRemoveJob] = useState<Job>();
+  const [removeFiles, setRemoveFiles] = useState(false);
+  const [duplicateUrls, setDuplicateUrls] = useState<string[]>();
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string>();
   const [rename, setRename] = useState("");
@@ -109,7 +136,7 @@ export function App() {
       const speed = result.reduce((sum, job) => sum + job.speed, 0);
       setSamples((old) => [...old.slice(-59), speed]);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyError(e));
       setConnected(false);
     } finally {
       refreshLock.current = false;
@@ -126,7 +153,7 @@ export function App() {
           setDestination(value.destination);
         }
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(friendlyError(e)));
     void refresh();
     const interval = setInterval(() => {
       void refresh();
@@ -188,8 +215,12 @@ export function App() {
             .toLowerCase()
             .includes(search.toLowerCase())
         );
+      }).sort((a, b) => {
+        if (sort === "name") return a.name.localeCompare(b.name);
+        if (sort === "progress") return (b.total ? b.bytes / b.total : 0) - (a.total ? a.bytes / a.total : 0);
+        return Date.parse(b.created_at) - Date.parse(a.created_at);
       }),
-    [jobs, view, search, filter],
+    [jobs, view, search, filter, sort],
   );
   const virtual = useVirtualizer({
     count: filtered.length,
@@ -206,7 +237,7 @@ export function App() {
       await api.control(job.id, action);
       await refresh();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -215,9 +246,10 @@ export function App() {
     setBusy(true);
     setError("");
     try {
+      const parsed = parseUrls(urls);
       await api.add({
-        urls: parseUrls(urls),
-        destination: destination || null,
+        urls: parsed,
+        destination: organize && destination === settings?.destination ? null : destination || null,
         allow_duplicates: duplicates,
       });
       setAddOpen(false);
@@ -225,10 +257,29 @@ export function App() {
       setDuplicates(false);
       await refresh();
     } catch (e) {
-      setError(String(e));
+      if (/duplicate URL/i.test(String(e))) {
+        setDuplicateUrls(parseUrls(urls));
+      } else {
+        setError(friendlyError(e));
+      }
     } finally {
       setBusy(false);
     }
+  }
+  async function resolveDuplicate(conflict: "rename" | "overwrite") {
+    if (!duplicateUrls) return;
+    setBusy(true);
+    setError("");
+    try {
+      for (const url of duplicateUrls) {
+        await api.submit({ url, destination: organize && destination === settings?.destination ? null : destination || null, filename: null, sha256: null, conflict, credentials: null });
+      }
+      setDuplicateUrls(undefined);
+      setAddOpen(false);
+      setUrls("");
+      await refresh();
+    } catch (e) { setError(friendlyError(e)); }
+    finally { setBusy(false); }
   }
   async function clipboard() {
     try {
@@ -255,7 +306,7 @@ export function App() {
       setUrls(text);
       setAddOpen(true);
     } catch (e) {
-      setError(String(e));
+      setError(friendlyError(e));
     }
   }
   const totalSpeed = jobs.reduce((sum, job) => sum + job.speed, 0);
@@ -401,6 +452,11 @@ export function App() {
               <option key={value}>{value}</option>
             ))}
           </select>
+          <select aria-label="Sort downloads" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+            <option value="latest">Newest first</option>
+            <option value="name">Name A–Z</option>
+            <option value="progress">Progress</option>
+          </select>
           <button
             disabled={
               busy ||
@@ -415,7 +471,7 @@ export function App() {
                   await api.pauseAll();
                   await refresh();
                 } catch (e) {
-                  setError(String(e));
+                  setError(friendlyError(e));
                 } finally {
                   setBusy(false);
                 }
@@ -508,6 +564,9 @@ export function App() {
                         ? `${bytes(job.speed)}/s · ${job.total ? `${Math.ceil((job.total - job.bytes) / job.speed)}s remaining` : "size unknown"}`
                         : category(job.name)}
                       {job.priority ? ` · Priority ${job.priority}` : ""}
+                      {job.state === "Completed" ? ` · Completed in ${elapsed(job)}` : ""}
+                      {job.state === "Probing" ? ` · Connecting to server${job.retries ? ` · retry ${job.retries}` : ""}` : ""}
+                      {job.state === "Failed" && job.error ? ` · ${friendlyError(job.error)}` : ""}
                     </small>
                   </div>
                   <div className="row-controls">
@@ -541,6 +600,14 @@ export function App() {
                       }}
                     >
                       Details
+                    </button>
+                    <button
+                      className="icon-button danger"
+                      aria-label={`Remove ${job.name}`}
+                      title="Remove from history"
+                      onClick={() => { setRemoveFiles(false); setRemoveJob(job); }}
+                    >
+                      ×
                     </button>
                   </div>
                 </div>
@@ -651,7 +718,11 @@ export function App() {
               checked={duplicates}
               onChange={(e) => setDuplicates(e.target.checked)}
             />
-            Add duplicates, even if these URLs are already in history
+            Add duplicates without asking
+          </label>
+          <label className="checkbox">
+            <input type="checkbox" checked={organize} onChange={(e) => setOrganize(e.target.checked)} />
+            Organize default downloads into Okytes folders by file type
           </label>
           <p className="muted">
             Existing files are preserved. Filename conflicts receive a numbered
@@ -732,6 +803,16 @@ export function App() {
               <dd>{selectedJob.url.replace(/^(hls|dash)\+/, "")}</dd>
               <dt>Destination</dt>
               <dd>{selectedJob.destination}</dd>
+              <dt>Added</dt>
+              <dd>{new Date(selectedJob.created_at).toLocaleString()}</dd>
+              {selectedJob.state === "Completed" && (
+                <>
+                  <dt>Completed</dt>
+                  <dd>
+                    {new Date(selectedJob.updated_at).toLocaleString()} ({elapsed(selectedJob)})
+                  </dd>
+                </>
+              )}
               {selectedJob.protocol !== "torrent" && (
                 <>
                   <dt>
@@ -770,7 +851,7 @@ export function App() {
             </dl>
             {selectedJob.error && (
               <p role="alert" className="alert">
-                {selectedJob.error}
+                {friendlyError(selectedJob.error)}
               </p>
             )}
             <div className="segment-map" aria-label="Durable segment ownership">
@@ -852,8 +933,8 @@ export function App() {
               <button
                 disabled={busy}
                 onClick={() => {
-                  void act(selectedJob, { kind: "Remove" });
-                  setSelected(undefined);
+                  setRemoveFiles(false);
+                  setRemoveJob(selectedJob);
                 }}
               >
                 Remove from history
@@ -867,6 +948,57 @@ export function App() {
         )}
       </Modal>
       <Modal
+        title="Duplicate download found"
+        open={!!duplicateUrls}
+        onOpenChange={(open) => { if (!open) setDuplicateUrls(undefined); }}
+      >
+        <div className="confirmation">
+          <p>This address is already in your download history. What should Okytes do?</p>
+          <div className="choice-grid">
+            <button className="choice" disabled={busy} onClick={() => void resolveDuplicate("overwrite")}>
+              <strong>Override</strong><span>Replace an existing file with the new download.</span>
+            </button>
+            <button className="choice" disabled={busy} onClick={() => void resolveDuplicate("rename")}>
+              <strong>Rename</strong><span>Keep both files by adding a numbered suffix.</span>
+            </button>
+            <button className="choice" disabled={busy} onClick={() => setDuplicateUrls(undefined)}>
+              <strong>Abort</strong><span>Keep the current download and add nothing.</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+      <Modal
+        title="Remove download?"
+        open={!!removeJob}
+        onOpenChange={(open) => { if (!open) setRemoveJob(undefined); }}
+      >
+        {removeJob && (
+          <div className="confirmation">
+            <p>Are you sure you want to remove <strong>{removeJob.name}</strong> from history?</p>
+            <label className="checkbox delete-option">
+              <input type="checkbox" checked={removeFiles} onChange={(e) => setRemoveFiles(e.target.checked)} />
+              Also remove the downloaded file or folder from this computer
+            </label>
+            <p className="muted">This cannot be undone. Removing history alone preserves completed files.</p>
+            <div className="actions end">
+              <button onClick={() => setRemoveJob(undefined)}>Keep download</button>
+              <button
+                className="danger-button"
+                disabled={busy}
+                onClick={() => {
+                  const job = removeJob;
+                  setRemoveJob(undefined);
+                  setSelected(undefined);
+                  void act(job, { kind: removeFiles ? "RemoveFiles" : "Remove" });
+                }}
+              >
+                {removeFiles ? "Remove history and file" : "Remove from history"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+      <Modal
         error={error}
         title="Settings"
         open={settingsOpen}
@@ -876,7 +1008,7 @@ export function App() {
             void api
               .settings()
               .then(setSettings)
-              .catch((e) => setError(String(e)));
+              .catch((e) => setError(friendlyError(e)));
         }}
       >
         {settings && (
@@ -890,7 +1022,7 @@ export function App() {
                   setDestination(settings.destination);
                   setSettingsOpen(false);
                 })
-                .catch((e) => setError(String(e)))
+                .catch((e) => setError(friendlyError(e)))
                 .finally(() => setBusy(false));
             }}
           >

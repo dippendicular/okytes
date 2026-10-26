@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
       ),
   ),
 }));
-vi.mock("../../../../packages/sdk-typescript/src/quick", () => ({
+vi.mock("../../../../dev-tools/sdk/packages/sdk-typescript/src/quick", () => ({
   createQuick: () => mocks,
 }));
 import { Quick } from "./Quick";

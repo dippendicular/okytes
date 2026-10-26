@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createQuick,
   type QuickPeerRequest,
-} from "../../../../packages/sdk-typescript/src/quick";
+} from "../../../../dev-tools/sdk/packages/sdk-typescript/src/quick";
 import { bytes } from "../api";
-import type { components } from "../../../../packages/sdk-typescript/src/schema";
+import type { components } from "../../../../dev-tools/sdk/packages/sdk-typescript/src/schema";
 
 type Snapshot = components["schemas"]["Snapshot"];
 type Action = components["schemas"]["Action"];
@@ -129,7 +129,17 @@ export function Quick() {
   return (
     <main>
       <header>
-        <img src="/quick/logo.png" alt="Okytes" width="240" />
+        <button
+          type="button"
+          className="back-button"
+          onClick={() => {
+            if (window.history.length > 1) window.history.back();
+            else window.close();
+          }}
+        >
+          ← Back
+        </button>
+        <img className="quick-logo" src="/quick/logo.png" alt="Okytes" width="240" />
         <h1>Quick Download</h1>
         <p>Your local download queue, in your browser.</p>
       </header>

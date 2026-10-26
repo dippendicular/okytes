@@ -120,6 +120,8 @@ pub enum Action {
     Restart,
     /// Remove history and partial data, preserving completed files.
     Remove,
+    /// Remove history, partial data and the published file/directory.
+    RemoveFiles,
     /// Rename an idle job's destination filename.
     Rename(String),
     /// Set queue priority, between -100 and 100.
@@ -141,6 +143,10 @@ pub struct Job {
     pub url: String,
     /// Final destination.
     pub destination: String,
+    /// RFC 3339 creation timestamp.
+    pub created_at: String,
+    /// RFC 3339 last state/progress timestamp; terminal jobs use completion time.
+    pub updated_at: String,
     /// Persisted state name.
     pub state: String,
     /// Durable downloaded bytes.

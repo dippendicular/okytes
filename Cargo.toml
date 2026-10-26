@@ -12,7 +12,7 @@ members = [
     "apps/native-host",
     "crates/daemon-api",
     "apps/daemon",
-    "dev-tools/benchmarks",
+    "dev-tools/test-suite/benchmarks",
     "crates/torrent-types",
     "crates/transport-torrent",
     "crates/transport-ftp",

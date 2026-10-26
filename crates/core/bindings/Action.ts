@@ -3,4 +3,4 @@
 /**
  * Queue control request; payload validation belongs to the service.
  */
-export type Action = { "kind": "Pause" } | { "kind": "Resume" } | { "kind": "Cancel" } | { "kind": "Restart" } | { "kind": "Remove" } | { "kind": "Rename", "value": string } | { "kind": "Priority", "value": number };
+export type Action = { "kind": "Pause" } | { "kind": "Resume" } | { "kind": "Cancel" } | { "kind": "Restart" } | { "kind": "Remove" } | { "kind": "RemoveFiles" } | { "kind": "Rename", "value": string } | { "kind": "Priority", "value": number };

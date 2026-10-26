@@ -503,9 +503,7 @@ if job.state!=JobState::Completed{job.state=job.state.transition(state,id)?;job.
     pub fn page(&self, offset: usize) -> Reply<Vec<JobRecord>> {
         self.call(move |conn| {
             let mut stmt = conn
-                .prepare(
-                    "SELECT record FROM jobs ORDER BY priority DESC, rowid ASC LIMIT 256 OFFSET ?1",
-                )
+                .prepare("SELECT record FROM jobs ORDER BY rowid DESC LIMIT 256 OFFSET ?1")
                 .map_err(db)?;
             let rows = stmt
                 .query_map([offset as i64], |row| row.get::<_, String>(0))

@@ -145,7 +145,7 @@ cargo test -p okytes-daemon --test contract
 Remove-Item Env:OKYTES_UPDATE_API
 ```
 
-Regenerate/build the SDK with pnpm in `packages/sdk-typescript`, then run the
+Regenerate/build the SDK with pnpm in `dev-tools/sdk/packages/sdk-typescript`, then run the
 explicit live integration check:
 
 ```sh

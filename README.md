@@ -132,7 +132,7 @@ the extension or a fresh direct URL.
 
 ### SDK and automation
 
-Okytes can be embedded in a Rust application or controlled through an authenticated daemon from Rust, TypeScript/Node.js, and Python. These SDKs reuse the same durable engine and protocol adapters; daemon clients never open its database. Start with the [SDK overview](docs/sdk/overview.md).
+Okytes can be embedded in a Rust application or controlled through an authenticated daemon from Rust, TypeScript/Node.js, and Python. These SDKs reuse the same durable engine and protocol adapters; daemon clients never open its database. Start with the [SDK overview](dev-tools/sdk/docs/overview.md).
 <img width="1536" height="1024" alt="Okytes Download Manager Architecture Infographic" src="https://github.com/user-attachments/assets/f82143ed-0087-499c-81d7-5520076a53d5" />
 
 One Rust engine manages transfers, state, recovery, and verification. Desktop apps, browser extensions, and other interfaces are clients, not separate download engines.
@@ -176,7 +176,7 @@ When a worker slows down, the engine can redistribute unfinished work without ov
 
 More connections are useful only when they actually improve throughput.
 
-The [benchmark harness](benchmarks/README.md) compares adaptive transfers with a fixed-concurrency control, with raw results and variance. Performance depends on the workload; calibration and server throttling can make fewer workers preferable.
+The [benchmark harness](dev-tools/test-suite/benchmarks/README.md) compares adaptive transfers with a fixed-concurrency control, with raw results and variance. Performance depends on the workload; calibration and server throttling can make fewer workers preferable.
 
 ### Bandwidth and schedules
 

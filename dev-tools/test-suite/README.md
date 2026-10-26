@@ -4,6 +4,7 @@ This directory contains repository-wide test infrastructure. Tests owned by an a
 
 ## Layout
 
+- `benchmarks/` contains the scheduler benchmark harness and recorded results.
 - `test-support/` is the reusable Rust fault server and desktop fixture binary.
 - `packages/sdk-typescript/tests/` checks the published Node SDK and its live daemon contract.
 - `packaging/tests/` checks release staging, checksums, notices and portable artifacts.
@@ -40,11 +41,11 @@ cargo build -p okytes-test-support --example desktop_fixture
 The package command builds against tests stored here:
 
 ```powershell
-pnpm --dir packages/sdk-typescript install --frozen-lockfile
-pnpm --dir packages/sdk-typescript generate
-pnpm --dir packages/sdk-typescript typecheck
-pnpm --dir packages/sdk-typescript build
-pnpm --dir packages/sdk-typescript test
+pnpm --dir dev-tools/sdk/packages/sdk-typescript install --frozen-lockfile
+pnpm --dir dev-tools/sdk/packages/sdk-typescript generate
+pnpm --dir dev-tools/sdk/packages/sdk-typescript typecheck
+pnpm --dir dev-tools/sdk/packages/sdk-typescript build
+pnpm --dir dev-tools/sdk/packages/sdk-typescript test
 ```
 
 The live SDK scenario is launched by `apps/daemon/tests/sdk.rs`; run it with `cargo test -p okytes-daemon --test sdk` after building the TypeScript package.
@@ -55,8 +56,8 @@ Build distributable artifacts and inspect them without publishing:
 
 ```powershell
 python -m pip install --upgrade build twine
-python -m build packages/sdk-python
-python -m twine check packages/sdk-python/dist/*
+python -m build dev-tools/sdk/packages/sdk-python
+python -m twine check dev-tools/sdk/packages/sdk-python/dist/*
 ```
 
 ## Desktop, extension and packaging

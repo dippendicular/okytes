@@ -10,6 +10,7 @@
   --muted: #586779;
   --blue: #1c58c9;
   --text: #202b3d;
+  --shadow: 0 12px 32px rgb(31 46 72 / 8%);
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -21,6 +22,7 @@
   --muted: #a4b2c7;
   --blue: #8eb5ff;
   --text: #e2e8f2;
+  --shadow: 0 16px 42px rgb(0 0 0 / 28%);
   color-scheme: dark;
 }
 * {
@@ -41,12 +43,13 @@ button,
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: 9px;
   padding: 8px 12px;
 }
 button:hover,
 .file-button:hover {
   background: var(--soft);
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--line));
 }
 button:disabled {
   opacity: 0.55;
@@ -60,7 +63,7 @@ input,
 select,
 textarea {
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 9px;
   padding: 9px 12px;
   background: var(--surface);
   color: var(--text);
@@ -78,6 +81,7 @@ textarea {
   padding: 28px 18px;
   display: flex;
   flex-direction: column;
+  box-shadow: 8px 0 28px rgb(31 46 72 / 4%);
 }
 .brand {
   display: flex;
@@ -99,14 +103,10 @@ textarea {
   display: block;
   width: 180px;
   height: auto;
+  transition: filter 160ms ease;
 }
-:root[data-theme="dark"] .brand {
-  background: #fff;
-  border-radius: 8px;
-  padding: 8px 4px;
-}
-:root[data-theme="dark"] .brand small {
-  color: #586779;
+:root[data-theme="dark"] .brand-logo {
+  filter: brightness(0) invert(1);
 }
 
 .primary {
@@ -173,6 +173,11 @@ header {
   justify-content: space-between;
   margin-bottom: 23px;
 }
+.quick-access { align-self: flex-start; min-width: 148px; }
+.quick-access > button { font-weight: 650; }
+.quick-access p { max-width: 210px; margin: 7px 0 0; color: var(--muted); font-size: 11px; }
+.quick-access div { position: absolute; z-index: 4; width: min(340px, 80vw); padding: 14px; margin-top: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.quick-access code { display: block; margin: 8px 0; font-size: 18px; }
 .eyebrow {
   font-size: 10px;
   color: var(--muted);
@@ -218,7 +223,7 @@ h2 {
 .list-heading,
 .job-row {
   display: grid;
-  grid-template-columns: minmax(210px, 1.1fr) minmax(200px, 1fr) 140px;
+  grid-template-columns: minmax(210px, 1.1fr) minmax(200px, 1fr) 170px;
   gap: 20px;
   align-items: center;
 }
@@ -236,12 +241,14 @@ h2 {
   background: var(--surface);
   border: 1px solid var(--line);
   border-top: 0;
-  border-radius: 0 0 8px 8px;
+  border-radius: 0 0 12px 12px;
+  box-shadow: var(--shadow);
 }
 .job-row {
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
 }
+.job-row:hover { background: color-mix(in srgb, var(--blue) 3%, var(--surface)); }
 .file-cell {
   display: flex;
   gap: 12px;
@@ -301,6 +308,9 @@ h2 {
 .progress-cell small {
   font-size: 10px;
   color: var(--muted);
+  display: block;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 progress {
   width: 100%;
@@ -333,6 +343,10 @@ progress::-moz-progress-bar {
   padding: 6px 8px;
   font-size: 11px;
 }
+.icon-button { width: 29px; padding-inline: 0 !important; font-size: 17px !important; line-height: 1; }
+.danger, .danger-button { color: #b42333; }
+.danger-button { border-color: #d997a0; background: #fff2f3; }
+:root[data-theme="dark"] .danger-button { color: #ffb2bb; background: #461c24; border-color: #81414b; }
 .empty {
   text-align: center;
   padding: 50px 20px;
@@ -485,6 +499,13 @@ dd {
 .details form {
   margin: 20px 0;
 }
+.actions.end { justify-content: flex-end; }
+.confirmation > p:first-child { font-size: 14px; line-height: 1.55; }
+.delete-option { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }
+.choice-grid { display: grid; gap: 10px; margin-top: 18px; }
+.choice { display: grid; gap: 5px; padding: 14px 16px; text-align: left; }
+.choice strong { color: var(--blue); }
+.choice span { color: var(--muted); font-size: 12px; }
 .sr-only {
   position: absolute;
   width: 1px;
@@ -512,7 +533,7 @@ dd {
   .list-heading,
   .job-row {
     gap: 12px;
-    grid-template-columns: minmax(150px, 1fr) minmax(180px, 1fr) 120px;
+    grid-template-columns: minmax(150px, 1fr) minmax(180px, 1fr) 145px;
   }
   .row-controls button {
     padding: 6px;

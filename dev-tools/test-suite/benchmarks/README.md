@@ -1,6 +1,6 @@
 # Scheduler benchmarks
 
-<img width="360" alt="Okytes" src="../assets/images/brand/okytes_logo_transperant.png" />
+<img width="360" alt="Okytes" src="../../../assets/images/brand/okytes_logo_transperant.png" />
 
 This harness uses a deterministic loopback origin and a separate download worker.
 The origin reuses `dev-tools/test-suite/test-support`; generated content is checked with SHA-256.
@@ -8,8 +8,8 @@ It is a developer tool and is not linked into production applications.
 
 ```sh
 cargo build -p okytes-bench --release --locked
-cargo run -p okytes-bench --release --locked -- run --runs 3 --mode fixed --output benchmarks/results/my-baseline
-cargo run -p okytes-bench --release --locked -- run --runs 3 --mode both --output benchmarks/results/my-comparison
+cargo run -p okytes-bench --release --locked -- run --runs 3 --mode fixed --output dev-tools/test-suite/benchmarks/results/my-baseline
+cargo run -p okytes-bench --release --locked -- run --runs 3 --mode both --output dev-tools/test-suite/benchmarks/results/my-comparison
 ```
 
 Use a new output directory for every invocation. The driver refuses to overwrite

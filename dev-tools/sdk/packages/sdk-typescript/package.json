@@ -13,10 +13,10 @@
   "types": "./dist/index.d.ts",
   "packageManager": "pnpm@11.11.0",
   "scripts": {
-    "generate": "openapi-typescript ../../apps/daemon/api/openapi-v1.json -o src/schema.ts",
+    "generate": "openapi-typescript ../../../../apps/daemon/api/openapi-v1.json -o src/schema.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "node --test ../../dev-tools/test-suite/packages/sdk-typescript/tests/client.test.mjs ../../dev-tools/test-suite/packages/sdk-typescript/tests/quick.test.mjs",
+    "test": "node --test ../../../test-suite/packages/sdk-typescript/tests/client.test.mjs ../../../test-suite/packages/sdk-typescript/tests/quick.test.mjs",
     "pack:check": "pnpm pack --dry-run"
   },
   "dependencies": {

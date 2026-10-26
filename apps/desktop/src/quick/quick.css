@@ -27,6 +27,8 @@ header img {
   max-width: 80%;
   height: auto;
 }
+.back-button { display: block; margin-bottom: 18px; }
+.quick-logo { transition: filter 160ms ease; }
 h1,
 h2,
 h3 {
@@ -149,6 +151,7 @@ footer {
   :focus-visible {
     outline-color: #ffb765;
   }
+  .quick-logo { filter: brightness(0) invert(1); }
 }
 @media (prefers-reduced-motion: reduce) {
   *,

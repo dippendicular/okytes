@@ -306,8 +306,8 @@ async fn run(runs: u32, output: PathBuf, mode: String) -> Result<()> {
     for path in [
         "Cargo.toml",
         "Cargo.lock",
-        "benchmarks/Cargo.toml",
-        "benchmarks/src/main.rs",
+        "dev-tools/test-suite/benchmarks/Cargo.toml",
+        "dev-tools/test-suite/benchmarks/src/main.rs",
         "crates/core/Cargo.toml",
         "crates/core/src/engine.rs",
         "crates/core/src/scheduler.rs",

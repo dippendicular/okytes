@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createOkytes } from "../../../../../packages/sdk-typescript/dist/index.js";
+import { createOkytes } from "../../../../../dev-tools/sdk/packages/sdk-typescript/dist/index.js";
 const token = "a".repeat(36) + "." + "b".repeat(64);
 test("rejects empty tokens, userinfo and plaintext remote access", () => {
   for (const options of [

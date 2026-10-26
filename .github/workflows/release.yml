@@ -37,12 +37,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p sdk-artifacts
-          pnpm --dir packages/sdk-typescript install --frozen-lockfile
-          pnpm --dir packages/sdk-typescript generate
-          pnpm --dir packages/sdk-typescript build
-          (cd packages/sdk-typescript && pnpm pack --pack-destination ../../sdk-artifacts)
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript install --frozen-lockfile
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript generate
+          pnpm --dir dev-tools/sdk/packages/sdk-typescript build
+          (cd dev-tools/sdk/packages/sdk-typescript && pnpm pack --pack-destination ../../../../sdk-artifacts)
           python -m pip install --disable-pip-version-check build twine
-          python -m build packages/sdk-python --outdir sdk-artifacts
+          python -m build dev-tools/sdk/packages/sdk-python --outdir sdk-artifacts
           python -m twine check sdk-artifacts/*
           cargo package -p okytes-sdk --locked --no-verify
           cp target/package/okytes-sdk-*.crate sdk-artifacts/

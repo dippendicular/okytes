@@ -4,18 +4,16 @@ import { listen } from "@tauri-apps/api/event";
 
 export function QuickAccess() {
   const [pairing, setPairing] = useState<{ code: string; url: string }>();
-  const [error, setError] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
   const [busy, setBusy] = useState(false);
   async function open() {
     setBusy(true);
-    setError("");
+    setUnavailable(false);
     setPairing(undefined);
     try {
       setPairing(await invoke("open_quick"));
     } catch {
-      setError(
-        "Quick Download needs a local daemon started with --quick and an attached desktop using an admin credential.",
-      );
+      setUnavailable(true);
     } finally {
       setBusy(false);
     }
@@ -42,7 +40,7 @@ export function QuickAccess() {
     return () => clearTimeout(timer);
   }, [pairing]);
   return (
-    <section aria-label="Quick Download access">
+    <section className="quick-access" aria-label="Quick Download access">
       <button
         type="button"
         disabled={busy}
@@ -50,7 +48,7 @@ export function QuickAccess() {
           void open();
         }}
       >
-        Open Quick Download
+        {busy ? "Opening…" : "Quick Download"}
       </button>
       {pairing && (
         <div role="status">
@@ -61,7 +59,9 @@ export function QuickAccess() {
           </button>
         </div>
       )}
-      {error && <p role="alert">{error}</p>}
+      {unavailable && (
+        <p role="status">Quick Download is unavailable right now.</p>
+      )}
     </section>
   );
 }

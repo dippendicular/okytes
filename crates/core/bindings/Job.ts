@@ -25,6 +25,8 @@ url: string,
  * Final destination.
  */
 destination: string,
+created_at: string,
+updated_at: string,
 /**
  * Persisted state name.
  */
