@@ -8,21 +8,16 @@
 Recoverable downloads, verified files, and control over your bandwidth. Free, open source, and fully local..
 
 ![Windows · Linux · macOS](https://img.shields.io/badge/Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey)
-![Built with Rust](https://img.shields.io/badge/built%20with-Rust-black)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-
-[![CI](https://github.com/dippendicular/okytes/actions/workflows/ci.yml/badge.svg)](https://github.com/dippendicular/okytes/actions/workflows/ci.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/dippendicular/okytes?display_name=tag)](https://github.com/dippendicular/okytes/releases)
 
 [Downloads](https://github.com/dippendicular/okytes/releases) · [Features](#features) · [Why Okytes](#why-okytes) · [Compare](#okytes-vs-idm-vs-fdm) · [Architecture](#how-it-works) · [Contribute](#contributing)
 
 ---
 
-## Why Okytes
+## Why Okytes?
 
-A fast download means little if the file ends up corrupted or you have to start over after a crash.
+Its free & efficient! And its doesn't crush!
 
-Okytes saves progress safely and checks files before marking them complete. Its parallel-transfer scheduler measures the effect of extra workers and keeps more only when the measured gain justifies them.
+No trial expiry. Just a download manager that does its job!
 
 | What matters | How Okytes handles it |
 |---|---|
@@ -33,9 +28,11 @@ Okytes saves progress safely and checks files before marking them complete. Its 
 | **One shared engine** | Desktop, browser, CLI, and API clients work with the same Rust engine and download queue. |
 | **Free and private** | No ads, subscriptions, license keys, required accounts, or default telemetry. |
 
-No artificial speed limits. No trial expiry. Just a download manager that does its job.
-
 ## Features
+
+A fast download means little if the file ends up corrupted or you have to start over after a crash.
+
+Okytes saves progress safely and checks files before marking them complete. Its parallel-transfer scheduler measures the effect of extra workers and keeps more only when the measured gain justifies them.
 
 ### Download
 
