@@ -40,7 +40,7 @@ Okytes saves progress safely and checks files before marking them complete. Its 
 - **BitTorrent:** Magnet links, DHT, trackers, selective downloads, piece verification, and configurable seeding.
 - **FTP/FTPS/SFTP:** Browse remote directories, upload and download files, and resume transfers where supported.
 - **HLS/DASH:** Download supported unprotected media streams with quality, audio, and subtitle selection.
-- **LAN Share:** Send files and complete folders directly to one or more paired devices over authenticated, encrypted local connections. Transfers support receiver approval, durable resume, integrity verification, progress, and discovery with manual-address fallback. See [LAN Share](docs/LAN-SHARE.md).
+- **LAN Share:** Send files and complete folders directly to one or more paired devices over authenticated, encrypted local connections. Transfers support receiver approval, durable resume, integrity verification, progress, and discovery with manual-address fallback. See [LAN Share](https://github.com/dippendicular/okytes/wiki/LAN-Share).
 
 ### Manage
 
