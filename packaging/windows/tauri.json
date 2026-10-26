@@ -6,7 +6,11 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "template": "../../../packaging/windows/templates/installer.nsi"
+      },
+      "wix": {
+        "template": "../../../packaging/windows/templates/main.wxs"
       },
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": false }
     }
