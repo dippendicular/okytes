@@ -19,6 +19,10 @@ Its free & efficient! And its doesn't crush!
 
 No trial expiry. Just a download manager that does its job!
 
+## Features
+
+A fast download means little if the file ends up corrupted or you have to start over after a crash.
+
 | What matters | How Okytes handles it |
 |---|---|
 | **Crash-safe recovery** | Only committed bytes count as saved progress. Resume from the last durable checkpoint after an interruption. |
@@ -27,10 +31,6 @@ No trial expiry. Just a download manager that does its job!
 | **Adaptive acceleration** | Adjusts connections based on measured throughput instead of blindly opening more workers. |
 | **One shared engine** | Desktop, browser, CLI, and API clients work with the same Rust engine and download queue. |
 | **Free and private** | No ads, subscriptions, license keys, required accounts, or default telemetry. |
-
-## Features
-
-A fast download means little if the file ends up corrupted or you have to start over after a crash.
 
 Okytes saves progress safely and checks files before marking them complete. Its parallel-transfer scheduler measures the effect of extra workers and keeps more only when the measured gain justifies them.
 
