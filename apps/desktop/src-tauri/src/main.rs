@@ -6,6 +6,31 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 mod updates;
 
+const CHROMIUM_EXTENSION_ID: &str = "lodlcbjagldkbkplgkhmhklfgpbgmpfb";
+
+fn register_native_host() -> Result<(), Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    let directory = executable
+        .parent()
+        .ok_or("desktop executable has no parent directory")?;
+    #[cfg(target_os = "windows")]
+    let host = directory.join("okytes-native-host.exe");
+    #[cfg(not(target_os = "windows"))]
+    let host = directory.join("okytes-native-host");
+
+    if !host.is_file() {
+        return Err(format!("native host companion is missing at {}", host.display()).into());
+    }
+    let output = std::process::Command::new(host)
+        .args(["install", "--chromium-id", CHROMIUM_EXTENSION_ID])
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("native host registration failed: {}", message.trim()).into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn read_clipboard() -> Result<String, String> {
     #[cfg(target_os = "windows")]
@@ -288,6 +313,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let directory = std::env::var_os("OKYTES_DATA_DIR").map(std::path::PathBuf::from).unwrap_or(app.path().app_data_dir()?);
             if !directory.is_absolute() {return Err("OKYTES_DATA_DIR must be absolute".into());}
             std::fs::create_dir_all(&directory)?;
+            // Re-run on every launch so upgrades and moved portable directories
+            // repair the absolute native-host manifest path automatically.
+            if let Err(error) = register_native_host() {
+                tracing::warn!(%error, "native host could not be registered; browser integration may be unavailable");
+            }
             let destination = std::env::var_os("OKYTES_DOWNLOAD_DIR").map(std::path::PathBuf::from).unwrap_or(app.path().download_dir()?);
             let service: Service = if let Some(client)=okytes_daemon_api::Client::from_environment()? {
                 Arc::new(client)
@@ -296,8 +326,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &directory.join("okytes.db"),
                 &destination,
             ))?;
-            // IPC exists only after the per-user host installer provisions its
-            // token. The listener owns a service reference, never a host process.
+            // Registration provisions the per-user token before this listener is
+            // opened. The listener owns a service reference, never a host process.
             if directory.join("browser-token.json").exists() {
                 let handler: Arc<dyn okytes_browser_bridge::Handler> = session.clone();
                 match tauri::async_runtime::block_on(okytes_browser_bridge::serve(&directory, handler)) {

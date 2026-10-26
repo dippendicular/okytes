@@ -19,8 +19,9 @@ The portable archive contains the desktop executable, CLI, daemon and native
 host in `bin/`. Extract the entire directory and launch `bin/okytes-desktop.exe`.
 It still requires WebView2. â€œPortableâ€ describes deployment, not private data:
 the desktop uses its normal per-user profile unless `OKYTES_DATA_DIR` and
-`OKYTES_DOWNLOAD_DIR` are set to absolute paths. It registers no service or
-browser host automatically.
+`OKYTES_DOWNLOAD_DIR` are set to absolute paths. It registers no service. On
+launch, the desktop registers its bundled browser host for the released
+extension's fixed ID in the current user's browser configuration.
 
 ## Linux
 
@@ -61,12 +62,12 @@ and may be blocked by Gatekeeper. No universal binary is promised.
 Download `Okytes-Chrome-extension.zip` from the same GitHub Release, extract it
 to a permanent folder, and load it using **Developer mode → Load unpacked** at
 `chrome://extensions`. No extension build tools are required. Follow the release's
-`BROWSER-INSTALLATION.md` for native-host registration and updates. This ZIP
+`BROWSER-INSTALLATION.md` for browser setup and updates. This ZIP
 distribution requires Developer mode; it is not a Chrome Web Store installation.
 
-Native messaging is an explicit registration step. See `extensions/README.md`
-and `apps/native-host` for the platform-specific registration command and
-browser identifiers. Installing the desktop does not install an extension.
+The desktop refreshes per-user native-messaging registration on every launch;
+it does not install the extension itself. See `extensions/README.md` and
+`apps/native-host` for the manual development command and browser identifiers.
 The daemon runs only when you launch or register it yourself; its service
 examples live in `apps/daemon`.
 

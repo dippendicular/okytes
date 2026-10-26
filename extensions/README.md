@@ -5,8 +5,8 @@
 GitHub Releases package `Okytes-Chrome-extension.zip` with compiled browser files.
 Users do not need build tools. Follow [the installation guide](INSTALLATION.md)
 or the release's `BROWSER-INSTALLATION.md`. This distribution still requires
-Chrome Developer mode and explicit native-host registration; store publication
-is a separate step.
+Chrome Developer mode; the desktop registers its bundled native host on launch.
+Store publication is a separate step.
 
 <img width="360" alt="Okytes" src="../assets/images/brand/okytes_logo_transperant.png" />
 
@@ -40,7 +40,15 @@ management page. In Firefox use **about:debugging → This Firefox → Load Temp
 Add-on**, selecting `extensions/dist/firefox/manifest.json`. Temporary Firefox
 installation lasts for that browser session; signing/store distribution is separate.
 
-## Register the native host
+## Native-host registration
+
+Released desktop packages register their bundled native host automatically on
+every launch. The packaged Chromium extension has the fixed ID
+`lodlcbjagldkbkplgkhmhklfgpbgmpfb`, which the desktop allowlists together with
+the Firefox ID `okytes@okytes.org`.
+
+The manual command below is only needed for development builds or a deliberately
+changed extension ID.
 
 Keep the built executable in a stable location. The manifest records its absolute
 path, so moving it requires re-running installation. On Windows:
