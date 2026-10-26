@@ -84,6 +84,7 @@ export const api = {
   settings: () => invoke<Settings>("settings"),
   setSettings: (settings: Settings) =>
     invoke<void>("set_settings", { settings }),
+  clipboard: () => invoke<string>("read_clipboard"),
   peerIdentity: () =>
     invoke<{ fingerprint: string; certificate: string }>("peer_identity"),
   peerDiscover: () => invoke<PeerDevice[]>("peer_discover"),

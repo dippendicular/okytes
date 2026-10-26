@@ -1,5 +1,13 @@
 # Okytes browser integration
 
+## Download a built extension
+
+GitHub Releases package `Okytes-Chrome-extension.zip` with compiled browser files.
+Users do not need build tools. Follow [the installation guide](INSTALLATION.md)
+or the release's `BROWSER-INSTALLATION.md`. This distribution still requires
+Chrome Developer mode and explicit native-host registration; store publication
+is a separate step.
+
 <img width="360" alt="Okytes" src="../assets/images/brand/okytes_logo_transperant.png" />
 
 Browser integration requires the running Okytes desktop app and its separately

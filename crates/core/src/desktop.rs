@@ -91,6 +91,49 @@ pub struct Settings {
     pub theme: String,
     /// Native completion/failure notifications.
     pub notifications: bool,
+    /// Ask before removing an item from history.
+    #[serde(default = "default_true")]
+    pub confirm_remove: bool,
+    /// Remember whether removal also deletes the downloaded file.
+    #[serde(default)]
+    pub remove_files: bool,
+    /// Enable decorative motion and animated transitions.
+    #[serde(default = "default_true")]
+    pub animations: bool,
+    /// Comfortable or compact interface density.
+    #[serde(default = "default_density")]
+    pub density: String,
+    /// User-selected accent: blue, violet, teal or rose.
+    #[serde(default = "default_accent")]
+    pub accent: String,
+    /// Keyboard shortcut for adding downloads.
+    #[serde(default = "default_add_shortcut")]
+    pub shortcut_add: String,
+    /// Keyboard shortcut for focusing search.
+    #[serde(default = "default_search_shortcut")]
+    pub shortcut_search: String,
+    /// Keyboard shortcut for opening shortcut settings.
+    #[serde(default = "default_help_shortcut")]
+    pub shortcut_help: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_density() -> String {
+    "comfortable".into()
+}
+fn default_accent() -> String {
+    "blue".into()
+}
+fn default_add_shortcut() -> String {
+    "Shift+N".into()
+}
+fn default_search_shortcut() -> String {
+    "Shift+F".into()
+}
+fn default_help_shortcut() -> String {
+    "Shift+?".into()
 }
 
 /// Validated batch creation input, limited to 100 URLs.

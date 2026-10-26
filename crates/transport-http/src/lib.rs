@@ -51,7 +51,10 @@ impl HttpTransport {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(config.connect_timeout_secs))
             .read_timeout(Duration::from_secs(config.read_timeout_secs))
-            .pool_max_idle_per_host(0)
+            // Reuse completed connections without retaining an unlimited idle pool.
+            // Semaphores below bound active requests, not active plus idle sockets.
+            .pool_max_idle_per_host(config.max_connections_per_origin)
+            .pool_idle_timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| TransportError::Configuration(e.to_string()))?;
         Ok(Self {

@@ -28,4 +28,12 @@ theme: string,
 /**
  * Native completion/failure notifications.
  */
-notifications: boolean, };
+notifications: boolean,
+confirm_remove: boolean,
+remove_files: boolean,
+animations: boolean,
+density: string,
+accent: string,
+shortcut_add: string,
+shortcut_search: string,
+shortcut_help: string, };

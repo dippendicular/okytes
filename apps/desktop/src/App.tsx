@@ -48,6 +48,12 @@ function elapsed(job: Job): string {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
+function shortcutFromEvent(event: KeyboardEvent | React.KeyboardEvent): string | null {
+  if (!event.shiftKey || event.key === "Shift") return null;
+  const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+  return `Shift+${key}`;
+}
+
 function Modal({
   title,
   children,
@@ -94,6 +100,7 @@ export function App() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All types");
   const [error, setError] = useState("");
+  const [errorDetails, setErrorDetails] = useState<Job>();
   const [addOpen, setAddOpen] = useState(false);
   const [torrentOpen, setTorrentOpen] = useState(false);
   const [fileOpen, setFileOpen] = useState(false);
@@ -109,6 +116,7 @@ export function App() {
   const [sort, setSort] = useState<SortKey>("latest");
   const [removeJob, setRemoveJob] = useState<Job>();
   const [removeFiles, setRemoveFiles] = useState(false);
+  const [rememberRemove, setRememberRemove] = useState(false);
   const [duplicateUrls, setDuplicateUrls] = useState<string[]>();
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string>();
@@ -173,6 +181,9 @@ export function App() {
             ? "dark"
             : "light"
           : settings.theme;
+      document.documentElement.dataset.accent = settings?.accent ?? "blue";
+      document.documentElement.dataset.density = settings?.density ?? "comfortable";
+      document.documentElement.dataset.motion = settings?.animations === false ? "off" : "on";
     };
     apply();
     media.addEventListener("change", apply);
@@ -181,24 +192,22 @@ export function App() {
 
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        if (event.key.toLowerCase() === "n") {
-          event.preventDefault();
-          setAddOpen(true);
-        }
-        if (event.key.toLowerCase() === "f") {
-          event.preventDefault();
-          searchInput.current?.focus();
-        }
-      }
-      if (event.key === "F1") {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes((event.target as HTMLElement)?.tagName)) return;
+      const pressed = shortcutFromEvent(event);
+      if (pressed === (settings?.shortcut_add ?? "Shift+N")) {
+        event.preventDefault();
+        setAddOpen(true);
+      } else if (pressed === (settings?.shortcut_search ?? "Shift+F")) {
+        event.preventDefault();
+        searchInput.current?.focus();
+      } else if (pressed === (settings?.shortcut_help ?? "Shift+?")) {
         event.preventDefault();
         setHelpOpen(true);
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, []);
+  }, [settings]);
 
   const filtered = useMemo(
     () =>
@@ -283,14 +292,23 @@ export function App() {
   }
   async function clipboard() {
     try {
-      const text = await navigator.clipboard.readText();
+      const text = await api.clipboard();
+      if (!text.trim()) throw new Error("Clipboard does not contain a URL");
       setUrls(text);
       setAddOpen(true);
-    } catch {
-      setError(
-        "Clipboard access was denied. Paste URLs into the Add downloads dialog.",
-      );
+    } catch (e) {
+      setError(friendlyError(e));
     }
+  }
+  function requestRemove(job: Job) {
+    const removeFile = settings?.remove_files ?? false;
+    if (settings && !settings.confirm_remove) {
+      void act(job, { kind: removeFile ? "RemoveFiles" : "Remove" });
+      return;
+    }
+    setRemoveFiles(removeFile);
+    setRememberRemove(false);
+    setRemoveJob(job);
   }
   async function importFile(file?: File) {
     if (!file) return;
@@ -566,8 +584,16 @@ export function App() {
                       {job.priority ? ` · Priority ${job.priority}` : ""}
                       {job.state === "Completed" ? ` · Completed in ${elapsed(job)}` : ""}
                       {job.state === "Probing" ? ` · Connecting to server${job.retries ? ` · retry ${job.retries}` : ""}` : ""}
-                      {job.state === "Failed" && job.error ? ` · ${friendlyError(job.error)}` : ""}
                     </small>
+                    {job.state === "Failed" && job.error && (
+                      <button
+                        className="error-details-button"
+                        aria-label={`Error details for ${job.name}`}
+                        onClick={() => setErrorDetails(job)}
+                      >
+                        Error details
+                      </button>
+                    )}
                   </div>
                   <div className="row-controls">
                     {(active.includes(job.state) || job.state === "Queued") && (
@@ -605,7 +631,7 @@ export function App() {
                       className="icon-button danger"
                       aria-label={`Remove ${job.name}`}
                       title="Remove from history"
-                      onClick={() => { setRemoveFiles(false); setRemoveJob(job); }}
+                      onClick={() => requestRemove(job)}
                     >
                       ×
                     </button>
@@ -682,6 +708,18 @@ export function App() {
           </svg>
         </section>
       </main>
+      <Modal
+        title="Error details"
+        open={!!errorDetails}
+        onOpenChange={(open) => { if (!open) setErrorDetails(undefined); }}
+      >
+        <p className="error-details-text">{errorDetails?.name}</p>
+        <p className="error-details-text">{friendlyError(errorDetails?.error ?? "")}</p>
+        <details>
+          <summary>Technical details</summary>
+          <pre className="error-details-text">{errorDetails?.error}</pre>
+        </details>
+      </Modal>
       <Modal
         error={error}
         title="Add downloads"
@@ -933,8 +971,7 @@ export function App() {
               <button
                 disabled={busy}
                 onClick={() => {
-                  setRemoveFiles(false);
-                  setRemoveJob(selectedJob);
+                  requestRemove(selectedJob);
                 }}
               >
                 Remove from history
@@ -979,6 +1016,10 @@ export function App() {
               <input type="checkbox" checked={removeFiles} onChange={(e) => setRemoveFiles(e.target.checked)} />
               Also remove the downloaded file or folder from this computer
             </label>
+            <label className="checkbox remember-option">
+              <input type="checkbox" checked={rememberRemove} onChange={(e) => setRememberRemove(e.target.checked)} />
+              Don’t ask again. Remember this choice for future removals.
+            </label>
             <p className="muted">This cannot be undone. Removing history alone preserves completed files.</p>
             <div className="actions end">
               <button onClick={() => setRemoveJob(undefined)}>Keep download</button>
@@ -989,6 +1030,11 @@ export function App() {
                   const job = removeJob;
                   setRemoveJob(undefined);
                   setSelected(undefined);
+                  if (rememberRemove && settings) {
+                    const next = { ...settings, confirm_remove: false, remove_files: removeFiles };
+                    setSettings(next);
+                    void api.setSettings(next).catch((e) => setError(friendlyError(e)));
+                  }
                   void act(job, { kind: removeFiles ? "RemoveFiles" : "Remove" });
                 }}
               >
@@ -1064,6 +1110,52 @@ export function App() {
                 ))}
               </select>
             </label>
+            <div className="settings-grid">
+              <label>
+                Accent color
+                <select value={settings.accent} onChange={(e) => setSettings({ ...settings, accent: e.target.value })}>
+                  {["blue", "violet", "teal", "rose"].map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label>
+                Interface density
+                <select value={settings.density} onChange={(e) => setSettings({ ...settings, density: e.target.value })}>
+                  <option value="comfortable">Comfortable</option>
+                  <option value="compact">Compact</option>
+                </select>
+              </label>
+            </div>
+            <label className="checkbox">
+              <input type="checkbox" checked={settings.animations} onChange={(e) => setSettings({ ...settings, animations: e.target.checked })} />
+              Background animation and interface motion
+            </label>
+            <fieldset className="settings-section">
+              <legend>History removal</legend>
+              <label className="checkbox">
+                <input type="checkbox" checked={settings.confirm_remove} onChange={(e) => setSettings({ ...settings, confirm_remove: e.target.checked })} />
+                Ask before removing a download
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" checked={settings.remove_files} onChange={(e) => setSettings({ ...settings, remove_files: e.target.checked })} />
+                Remove downloaded files by default
+              </label>
+            </fieldset>
+            <fieldset className="settings-section shortcut-settings">
+              <legend>Keyboard shortcuts</legend>
+              <p className="muted">Select a field and press Shift with another key.</p>
+              {([[
+                "shortcut_add", "Add downloads",
+              ], ["shortcut_search", "Focus search"], ["shortcut_help", "Open shortcut guide"]] as const).map(([field, label]) => (
+                <label key={field}>
+                  {label}
+                  <input readOnly value={settings[field]} onKeyDown={(event) => {
+                    event.preventDefault();
+                    const shortcut = shortcutFromEvent(event);
+                    if (shortcut) setSettings({ ...settings, [field]: shortcut });
+                  }} aria-label={`${label} shortcut`} />
+                </label>
+              ))}
+            </fieldset>
             <TrafficSettings
               policy={settings.traffic ?? defaultTraffic}
               onChange={(traffic) => setSettings({ ...settings, traffic })}
@@ -1100,17 +1192,20 @@ export function App() {
         onOpenChange={setHelpOpen}
       >
         <dl>
-          <dt>Ctrl / ⌘ + N</dt>
+          <dt>{settings?.shortcut_add ?? "Shift+N"}</dt>
           <dd>Add downloads</dd>
-          <dt>Ctrl / ⌘ + F</dt>
+          <dt>{settings?.shortcut_search ?? "Shift+F"}</dt>
           <dd>Search</dd>
-          <dt>F1</dt>
+          <dt>{settings?.shortcut_help ?? "Shift+?"}</dt>
           <dd>Open this guide</dd>
           <dt>Escape</dt>
           <dd>Close dialog</dd>
           <dt>Tab / Shift + Tab</dt>
           <dd>Move between controls</dd>
         </dl>
+        <button onClick={() => { setHelpOpen(false); setSettingsOpen(true); }}>
+          Customize shortcuts
+        </button>
       </Modal>
     </div>
   );

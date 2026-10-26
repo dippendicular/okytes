@@ -34,7 +34,11 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Okytes",
+    "copyright": "Copyright © 2026 Okytes contributors",
+    "shortDescription": "Fast, private and resilient download manager",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

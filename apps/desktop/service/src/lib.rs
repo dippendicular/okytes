@@ -236,6 +236,14 @@ impl Session {
                 concurrency: 4,
                 theme: "system".into(),
                 notifications: true,
+                confirm_remove: true,
+                remove_files: false,
+                animations: true,
+                density: "comfortable".into(),
+                accent: "blue".into(),
+                shortcut_add: "Shift+N".into(),
+                shortcut_search: "Shift+F".into(),
+                shortcut_help: "Shift+?".into(),
             },
         };
         validate_settings(&settings)?;
@@ -519,6 +527,15 @@ fn validate_settings(settings: &Settings) -> EngineResult<()> {
     if settings.version != 1
         || !(1..=32).contains(&settings.concurrency)
         || !["light", "dark", "system"].contains(&settings.theme.as_str())
+        || !["comfortable", "compact"].contains(&settings.density.as_str())
+        || !["blue", "violet", "teal", "rose"].contains(&settings.accent.as_str())
+        || ![
+            &settings.shortcut_add,
+            &settings.shortcut_search,
+            &settings.shortcut_help,
+        ]
+        .iter()
+        .all(|value| value.starts_with("Shift+") && value.len() <= 32)
         || settings.destination.len() > 4096
         || !Path::new(&settings.destination).is_absolute()
     {

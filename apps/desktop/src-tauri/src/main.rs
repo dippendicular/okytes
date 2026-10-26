@@ -6,6 +6,30 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 mod updates;
 
+#[tauri::command]
+fn read_clipboard() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-Clipboard -Raw",
+        ])
+        .output();
+    #[cfg(target_os = "macos")]
+    let output = std::process::Command::new("pbpaste").output();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let output = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard", "-o"])
+        .output();
+    let output = output.map_err(|_| "Clipboard is unavailable".to_owned())?;
+    if !output.status.success() {
+        return Err("Clipboard is unavailable".to_owned());
+    }
+    String::from_utf8(output.stdout).map_err(|_| "Clipboard does not contain text".to_owned())
+}
+
 fn daemon_client() -> Result<okytes_daemon_api::Client, String> {
     okytes_daemon_api::Client::from_environment()
         .map_err(|_| "Invalid daemon configuration".to_owned())?
@@ -233,7 +257,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .manage(updates::Updates(tokio::sync::Mutex::new(None)))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![submit,inspect_media,authorize_file,
+        .invoke_handler(tauri::generate_handler![submit,inspect_media,authorize_file,read_clipboard,
             open_quick,
             list,
             get,

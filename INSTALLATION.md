@@ -58,6 +58,12 @@ and may be blocked by Gatekeeper. No universal binary is promised.
 
 ## Browser integration and background service
 
+Download `Okytes-Chrome-extension.zip` from the same GitHub Release, extract it
+to a permanent folder, and load it using **Developer mode → Load unpacked** at
+`chrome://extensions`. No extension build tools are required. Follow the release's
+`BROWSER-INSTALLATION.md` for native-host registration and updates. This ZIP
+distribution requires Developer mode; it is not a Chrome Web Store installation.
+
 Native messaging is an explicit registration step. See `extensions/README.md`
 and `apps/native-host` for the platform-specific registration command and
 browser identifiers. Installing the desktop does not install an extension.

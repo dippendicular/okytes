@@ -15,6 +15,36 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  browser-extension:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - name: Build and check browser extension
+        run: |
+          pnpm --dir extensions install --frozen-lockfile
+          pnpm --dir extensions typecheck
+          pnpm --dir extensions lint
+          pnpm --dir extensions test
+          pnpm --dir extensions build
+      - name: Package ready-to-load Chrome extension
+        run: |
+          mkdir -p artifacts
+          cp extensions/INSTALLATION.md artifacts/BROWSER-INSTALLATION.md
+          (cd extensions/dist/chromium && zip -r ../../../artifacts/Okytes-Chrome-extension.zip .)
+          node -e 'const fs = require("node:fs"); fs.writeFileSync("artifacts/artifacts-browser.json", JSON.stringify([{name:"Okytes-Chrome-extension.zip",target:"Chrome / Chromium",signing:"unsigned unpacked extension",installation:"unverified; manual Load unpacked and native-host registration required"}]));'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-browser
+          path: artifacts/
+          if-no-files-found: error
   sdk-packages:
     runs-on: ubuntu-22.04
     steps:
@@ -262,7 +292,7 @@ jobs:
           path: artifacts/
           if-no-files-found: error
   publish:
-    needs: build
+    needs: [build, browser-extension]
     runs-on: ubuntu-22.04
     environment: release
     permissions:
