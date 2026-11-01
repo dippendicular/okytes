@@ -1,0 +1,120 @@
+# .github/dependabot.yml
+version: 2
+
+updates:
+  # Rust workspace (all crates share one Cargo.lock at the root)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Dhaka"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "rust"]
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      tauri:
+        patterns: ["tauri", "tauri-*"]
+      tokio-and-http:
+        patterns: ["tokio*", "hyper*", "reqwest", "axum*", "tower*", "rustls*"]
+      rust-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Deliberately pinned with "=" in Cargo.toml; update by hand after review.
+      - dependency-name: "rcgen"
+      - dependency-name: "mdns-sd"
+
+  # Desktop frontend (pnpm)
+  - package-ecosystem: "npm"
+    directory: "/apps/desktop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "frontend"]
+    commit-message:
+      prefix: "deps(desktop)"
+    groups:
+      tauri-js:
+        patterns: ["@tauri-apps/*"]
+      react:
+        patterns: ["react", "react-dom", "@types/react*"]
+      lint-and-test:
+        patterns: ["eslint*", "typescript-eslint", "prettier", "vitest", "@testing-library/*", "jsdom", "@playwright/test"]
+      frontend-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Browser extensions (pnpm)
+  - package-ecosystem: "npm"
+    directory: "/extensions"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "extension"]
+    commit-message:
+      prefix: "deps(extension)"
+    groups:
+      extension-tooling:
+        update-types: ["minor", "patch"]
+
+  # TypeScript SDK (pnpm)
+  - package-ecosystem: "npm"
+    directory: "/dev-tools/sdk/packages/sdk-typescript"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "sdk"]
+    commit-message:
+      prefix: "deps(sdk-ts)"
+    groups:
+      sdk-ts:
+        update-types: ["minor", "patch"]
+
+  # Official example plugin (npm)
+  - package-ecosystem: "npm"
+    directory: "/plugins/webhook-notify"
+    schedule:
+      interval: "monthly"
+    labels: ["dependencies", "plugins"]
+    commit-message:
+      prefix: "deps(plugin)"
+
+  # Python SDK (pyproject.toml)
+  - package-ecosystem: "pip"
+    directory: "/dev-tools/sdk/packages/sdk-python"
+    schedule:
+      interval: "monthly"
+    labels: ["dependencies", "sdk"]
+    commit-message:
+      prefix: "deps(sdk-py)"
+
+  # GitHub Actions used by CI and release workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Headless server image (Dockerfile base images)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "deps(docker)"
+    ignore:
+      # The Rust image must stay on the version pinned in rust-toolchain.toml.
+      - dependency-name: "rust"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
