@@ -1,7 +1,9 @@
 # Contributing to Okytes
 
 Start with an issue describing the problem, expected behavior and a reproducible
-example. Small bug fixes can go directly to a pull request. Discuss protocol,
+example. Using an AI coding agent? Read
+[dev-tools/AI-CONTRIBUTOR-GUIDE.md](dev-tools/AI-CONTRIBUTOR-GUIDE.md) first.
+Small bug fixes can go directly to a pull request. Discuss protocol,
 persistence and public API changes before committing to a large implementation.
 
 ## Build from source

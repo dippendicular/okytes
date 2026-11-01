@@ -16,7 +16,11 @@ $out = Join-Path $root "target\release\windows_release"
 function Step($name) { Write-Host "`n==> $name" -ForegroundColor Cyan }
 # Windows PowerShell 5.1 does not stop on failing native commands; check exit codes.
 function Run {
-    & $args[0] @($args | Select-Object -Skip 1)
+    # pnpm installs a pnpm.ps1 shim that mangles splatted arguments ("--dir x"
+    # arrives as one option); call the .cmd shim instead.
+    $exe = if ($args[0] -eq "pnpm") { "pnpm.cmd" } else { $args[0] }
+    [string[]]$rest = @($args | Select-Object -Skip 1)
+    & $exe @rest
     if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $($args -join ' ')" }
 }
 
@@ -46,8 +50,9 @@ Run node packaging/companions.mjs $release $target
 Run node packaging/configure.mjs windows .tools-release.json
 
 Step "Building the desktop app, NSIS installer and MSI"
+# A bare -- is swallowed by PowerShell's argument parser; quote it.
 Run pnpm --dir apps/desktop exec tauri build --target $target `
-    --config "$root\packaging\windows\tauri.json" --config "$root\.tools-release.json" -- --locked
+    --config "$root\packaging\windows\tauri.json" --config "$root\.tools-release.json" '--' --locked
 
 Step "Building server tools (MCP and cloud)"
 Run cargo build --release --locked --target $target -p okytes-mcp -p okytes-cloud
