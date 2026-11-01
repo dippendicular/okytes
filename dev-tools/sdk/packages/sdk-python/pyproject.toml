@@ -8,7 +8,7 @@ version = "0.0.2"
 description = "Typed asynchronous client for the Okytes transfer daemon"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT OR Apache-2.0" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Okytes contributors" }]
 classifiers = ["Typing :: Typed", "Programming Language :: Python :: 3 :: Only"]
 dependencies = []
@@ -23,5 +23,5 @@ Repository = "https://github.com/dippendicular/okytes"
 packages = ["src/okytes"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/okytes", "README.md", "CHANGELOG.md", "LICENSE-APACHE", "LICENSE-MIT", "pyproject.toml"]
+include = ["src/okytes", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
 

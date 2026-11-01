@@ -323,7 +323,7 @@ See the [issue tracker](https://github.com/dippendicular/okytes/issues) to get i
 
 ## License
 
-Okytes is dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your choice.
+Okytes is licensed under the [Apache License 2.0](LICENSE).
 
 ---
 

@@ -38,7 +38,7 @@ and removal are in `INSTALLATION.md`. Building successfully does not
 establish that an installer or another platform works. State unverified cases
 plainly in your pull request.
 
-Contributions are licensed under Apache-2.0 OR MIT, matching the project.
+Contributions are licensed under the Apache License 2.0, matching the project.
 
 ## Architecture changes
 

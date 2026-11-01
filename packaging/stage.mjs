@@ -30,7 +30,7 @@ for (const name of [
   await copyFile(join(resolve(binaryDirectory), name + extension), destination);
   await chmod(destination, 0o755);
 }
-for (const name of ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE"]) {
+for (const name of ["LICENSE"]) {
   await copyFile(name, join(output, name));
 }
 await writeFile(

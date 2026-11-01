@@ -246,7 +246,7 @@ jobs:
             done
           fi
           if [ "$PLATFORM" = macos ]; then
-            tar -czf "target/$TARGET/release/bundle/portable/Okytes-tools.tar.gz" -C portable bin/okytes-cli bin/okytes-daemon bin/okytes-native-host LICENSE LICENSE-MIT LICENSE-APACHE INSTALLATION.md target.txt third-party-notices
+            tar -czf "target/$TARGET/release/bundle/portable/Okytes-tools.tar.gz" -C portable bin/okytes-cli bin/okytes-daemon bin/okytes-native-host LICENSE INSTALLATION.md target.txt third-party-notices
             app_bundle="target/$TARGET/release/bundle/macos"
             if [ ! -f "$app_bundle/Okytes.app.tar.gz" ]; then
               tar -czf "$app_bundle/Okytes.app.tar.gz" -C "$app_bundle" Okytes.app

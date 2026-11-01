@@ -2,7 +2,7 @@
   "name": "@okytes/sdk",
   "version": "0.0.2",
   "description": "Authenticated TypeScript and Node.js client for the Okytes transfer daemon",
-  "license": "MIT OR Apache-2.0",
+  "license": "Apache-2.0",
   "repository": "https://github.com/dippendicular/okytes",
   "engines": {
     "node": ">=20"
@@ -11,8 +11,7 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE-APACHE",
-    "LICENSE-MIT"
+    "LICENSE"
   ],
   "sideEffects": false,
   "publishConfig": {
