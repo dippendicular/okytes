@@ -16,6 +16,8 @@ pub use okytes_daemon_api::contract::{
 pub use okytes_daemon_api::Client as DaemonClient;
 pub use okytes_torrent_types::{Input as TorrentRequest, Metadata as TorrentMetadata};
 
+pub mod plugin;
+
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     pub state_directory: PathBuf,

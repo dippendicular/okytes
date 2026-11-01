@@ -21,6 +21,8 @@ async fn every_endpoint_rejects_missing_credentials_and_enforces_all_scopes() {
         .issue(IssueToken {
             scope: Scope::ReadOnly,
             lifetime_secs: 60,
+            permissions: None,
+            label: None,
         })
         .await
         .unwrap()
@@ -31,6 +33,8 @@ async fn every_endpoint_rejects_missing_credentials_and_enforces_all_scopes() {
         .issue(IssueToken {
             scope: Scope::Control,
             lifetime_secs: 60,
+            permissions: None,
+            label: None,
         })
         .await
         .unwrap()
@@ -215,6 +219,8 @@ async fn tokens_expire_revoke_and_are_persisted_as_hashes_only() {
             Some(&IssueToken {
                 scope: Scope::Control,
                 lifetime_secs: 2,
+                permissions: None,
+                label: None,
             }),
         )
         .await
@@ -230,6 +236,8 @@ async fn tokens_expire_revoke_and_are_persisted_as_hashes_only() {
             Some(&IssueToken {
                 scope: Scope::ReadOnly,
                 lifetime_secs: 60,
+                permissions: None,
+                label: None,
             }),
         )
         .await
@@ -364,6 +372,8 @@ async fn event_stream_is_authenticated_and_revocation_closes_existing_subscriber
         .issue(IssueToken {
             scope: Scope::ReadOnly,
             lifetime_secs: 60,
+            permissions: None,
+            label: None,
         })
         .await
         .unwrap();
@@ -406,6 +416,8 @@ async fn slow_headers_do_not_block_other_clients_and_control_destinations_are_sc
         .issue(IssueToken {
             scope: Scope::Control,
             lifetime_secs: 60,
+            permissions: None,
+            label: None,
         })
         .await
         .unwrap();

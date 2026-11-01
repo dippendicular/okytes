@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { MediaChoice } from "../../../crates/core/bindings/MediaChoice";
 
@@ -144,6 +144,21 @@ export function MediaForm({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [merge, setMerge] = useState(true);
+  const [ffmpeg, setFfmpeg] = useState<string | null>();
+  useEffect(() => {
+    let live = true;
+    void api
+      .ffmpegStatus()
+      .then((value) => live && setFfmpeg(value))
+      .catch(() => live && setFfmpeg(null));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const picked = choices.filter((c) => selected.has(c.id));
+  const mergeable =
+    picked.some((c) => c.kind === "video") && picked.length >= 2 && !!ffmpeg;
   return (
     <form
       className="settings"
@@ -152,16 +167,24 @@ export function MediaForm({
         setBusy(true);
         setError("");
         void (async () => {
-          for (const choice of choices.filter((c) => selected.has(c.id))) {
-            await api.submit({
-              url: choice.url,
-              destination: destination || null,
-              filename: null,
-              sha256: null,
-              conflict: "rename",
-              credentials: null,
-            });
+          const ids: string[] = [];
+          // Video first: the merged file takes its folder and name.
+          const ordered = [...picked].sort(
+            (a, b) => Number(b.kind === "video") - Number(a.kind === "video"),
+          );
+          for (const choice of ordered) {
+            ids.push(
+              await api.submit({
+                url: choice.url,
+                destination: destination || null,
+                filename: null,
+                sha256: null,
+                conflict: "rename",
+                credentials: null,
+              }),
+            );
           }
+          if (merge && mergeable) await api.planMerge(ids);
           done();
         })()
           .catch((e: unknown) => setError(String(e)))
@@ -232,6 +255,23 @@ export function MediaForm({
           {choice.kind}: {choice.label}
         </label>
       ))}
+      <label>
+        <input
+          type="checkbox"
+          checked={merge && mergeable}
+          disabled={!mergeable}
+          onChange={(e) => setMerge(e.target.checked)}
+        />{" "}
+        Merge the selected video, audio and subtitles into one MKV when all
+        finish
+      </label>
+      <p className="muted">
+        {ffmpeg
+          ? `Merging uses ${ffmpeg} and copies streams without re-encoding. The separate tracks are kept.`
+          : ffmpeg === null
+            ? "Merging needs ffmpeg. Install it and make sure it is on PATH, or set OKYTES_FFMPEG to its full path."
+            : "Checking for ffmpeg…"}
+      </p>
       <p>
         Each selected track downloads separately. Supported VOD streams assemble
         as MPEG-TS, fragmented MP4, or WebVTT. Live streams, DRM and layouts

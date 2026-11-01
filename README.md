@@ -49,14 +49,22 @@ Okytes saves progress safely and checks files before marking them complete. Its 
 - Drag-and-drop links, duplicate detection, and file conflict handling.
 - Searchable history, filters, notifications, and system tray controls.
 - Detailed transfer diagnostics, including worker activity, byte ranges, retries, speed, and errors.
+- Per-download window with a live file map, connection table, speed limiter and completion actions.
+- Expired-link recovery: replace a link mid-download and keep progress when it serves the same file.
+- Website crawler, playlist expansion and remote ZIP preview before downloading.
+- Merge separately downloaded video, audio and subtitle tracks with ffmpeg (no re-encoding).
+- Upload finished downloads to Google Drive, Dropbox or OneDrive.
 
 ### Integrate
 
 - Browser extensions for Chrome, Edge, Brave, Opera, Vivaldi, and Firefox.
 - Local Quick Download page for links missed by browser interception.
 - Command-line interface with JSON output for scripts and automation.
-- Optional background daemon with an authenticated local API.
+- Optional background daemon with an authenticated local API. It runs headless on servers and in Docker; see [SERVER.md](apps/daemon/SERVER.md).
 - Shared transfer infrastructure for desktop, browser, CLI, and future SDK integrations.
+- Plugin foundation with permission-restricted tokens and Rust, TypeScript and Python SDK support. See [plugins](plugins/README.md).
+- Local MCP server so AI assistants can manage downloads. See [okytes-mcp](apps/mcp/README.md).
+- Self-hosted Okytes Cloud: accounts, device pairing, phone-to-PC queue and history sync. See [okytes-cloud](apps/cloud/README.md).
 
 Okytes is being built in milestones. Features listed here describe the product scope and may not all be available in the current release.
 

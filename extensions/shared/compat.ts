@@ -40,10 +40,14 @@ export interface Browser {
       ]
     >;
     onInstalled: Event<[]>;
+    onStartup: Event<[]>;
     openOptionsPage(): Promise<void>;
   };
   downloads: {
     onCreated: Event<[DownloadItem]>;
+    onChanged: Event<
+      [{ id: number; filename?: { current?: string }; state?: { current?: string } }]
+    >;
     cancel(id: number): Promise<void>;
     download(input: { url: string }): Promise<number>;
   };
@@ -93,13 +97,24 @@ export interface Browser {
     >;
     onBeforeRequest: Event<[{ url: string; tabId: number; type: string }]>;
   };
-  contextMenus: {
-    create(input: { id: string; title: string; contexts: string[] }): void;
-    removeAll(): Promise<void>;
-    onClicked: Event<
-      [{ menuItemId: string | number; linkUrl?: string; srcUrl?: string }, Tab]
-    >;
+  contextMenus: ContextMenus;
+  /** Firefox's native name; `contextMenus` is an alias there. */
+  menus?: ContextMenus;
+  action?: {
+    setBadgeText(input: { text: string }): Promise<void>;
+    setBadgeBackgroundColor(input: { color: string }): Promise<void>;
+    setTitle(input: { title: string }): Promise<void>;
   };
+}
+export interface ContextMenus {
+  create(input: { id: string; title: string; contexts: string[] }): void;
+  removeAll(): Promise<void>;
+  onClicked: Event<
+    [
+      { menuItemId: string | number; linkUrl?: string; srcUrl?: string },
+      Tab | undefined,
+    ]
+  >;
 }
 declare const browser: Browser | undefined;
 declare const chrome: Browser;

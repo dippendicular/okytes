@@ -4,7 +4,9 @@ import type { AddInput } from "../../../crates/core/bindings/AddInput";
 import type { Job } from "../../../crates/core/bindings/Job";
 import type { Settings } from "../../../crates/core/bindings/Settings";
 import type { Snapshot } from "../../../crates/core/bindings/Snapshot";
-export type { Action, AddInput, Job, Settings, Snapshot };
+import type { Telemetry } from "../../../crates/core/bindings/Telemetry";
+import type { Connection } from "../../../crates/core/bindings/Connection";
+export type { Action, AddInput, Connection, Job, Settings, Snapshot, Telemetry };
 export type PeerDevice = {
   peer_id: string | null;
   fullname: string;
@@ -39,6 +41,18 @@ export type PeerTrust = {
   fingerprint: string;
   revision: number;
   revoked: boolean;
+};
+export type CloudStatus = {
+  url: string;
+  device_id: string;
+  name: string;
+  error: string | null;
+};
+export type StorageProvider = {
+  provider: string;
+  name: string;
+  configured: boolean;
+  connected: boolean;
 };
 export const api = {
   inspectMedia: (url: string) =>
@@ -78,6 +92,55 @@ export const api = {
   pauseAll: () => invoke<void>("pause_all"),
   list: (offset = 0) => invoke<Snapshot>("list", { offset }),
   get: (id: string) => invoke<Job>("get", { id }),
+  telemetry: (id: string) => invoke<Telemetry>("telemetry", { id }),
+  openDetails: (id: string) => invoke<void>("open_details", { id }),
+  ffmpegStatus: () => invoke<string | null>("ffmpeg_status"),
+  planMerge: (parts: string[]) => invoke<void>("plan_merge", { parts }),
+  expandPlaylist: (url: string) => invoke<string[]>("expand_playlist", { url }),
+  crawl: (
+    input: import("../../../crates/core/bindings/CrawlInput").CrawlInput,
+  ) =>
+    invoke<import("../../../crates/core/bindings/CrawlResult").CrawlResult>(
+      "crawl",
+      { input },
+    ),
+  cloudStatus: () => invoke<CloudStatus | null>("cloud_status"),
+  cloudPair: (url: string, code: string, name: string) =>
+    invoke<CloudStatus>("cloud_pair", { url, code, name }),
+  cloudUnpair: () => invoke<void>("cloud_unpair"),
+  cloudHistory: () =>
+    invoke<
+      {
+        job_id: string;
+        name: string;
+        source: string;
+        state: string;
+        total: number | null;
+        bytes: number;
+        updated_at: string;
+        device_name: string | null;
+      }[]
+    >("cloud_history"),
+  storageStatus: () => invoke<StorageProvider[]>("storage_status"),
+  storageConfigure: (
+    provider: string,
+    clientId: string,
+    clientSecret: string | null,
+  ) =>
+    invoke<void>("storage_configure", {
+      provider,
+      clientId,
+      clientSecret,
+    }),
+  storageConnect: (provider: string) =>
+    invoke<void>("storage_connect", { provider }),
+  storageDisconnect: (provider: string) =>
+    invoke<void>("storage_disconnect", { provider }),
+  inspectZip: (url: string) =>
+    invoke<import("../../../crates/core/bindings/ZipListing").ZipListing>(
+      "inspect_zip",
+      { url },
+    ),
   add: (input: AddInput) => invoke<string[]>("add", { input }),
   control: (id: string, action: Action) =>
     invoke<void>("control", { id, action }),

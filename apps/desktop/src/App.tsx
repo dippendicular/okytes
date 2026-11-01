@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FileTransferForm, MediaForm } from "./Transfers";
 import { TorrentForm, TorrentDiagnostics } from "./Torrents";
@@ -7,6 +8,10 @@ import { TrafficSettings, defaultTraffic } from "./TrafficSettings";
 import { Updates } from "./Updates";
 import { QuickAccess } from "./QuickAccess";
 import { PeerShare } from "./PeerShare";
+import { DownloadDetails } from "./Details";
+import { ZipPreview } from "./ZipPreview";
+import { Crawler } from "./Crawler";
+import { CloudSettings, StorageSettings } from "./CloudSettings";
 import {
   api,
   bytes,
@@ -60,18 +65,20 @@ function Modal({
   open,
   onOpenChange,
   error,
+  wide,
 }: {
   title: string;
   children: React.ReactNode;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   error?: string;
+  wide?: boolean;
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
-        <Dialog.Content className="dialog">
+        <Dialog.Content className={wide ? "dialog wide" : "dialog"}>
           <div className="dialog-title">
             <Dialog.Title>{title}</Dialog.Title>
             <Dialog.Close aria-label="Close dialog">×</Dialog.Close>
@@ -105,6 +112,7 @@ export function App() {
   const [torrentOpen, setTorrentOpen] = useState(false);
   const [fileOpen, setFileOpen] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
+  const [crawlOpen, setCrawlOpen] = useState(false);
   const [peerOpen, setPeerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -122,9 +130,36 @@ export function App() {
   const [selected, setSelected] = useState<string>();
   const [rename, setRename] = useState("");
   const [samples, setSamples] = useState<number[]>([]);
+  const [zipUrl, setZipUrl] = useState<string>();
+  const [newLink, setNewLink] = useState("");
+  const [upload, setUpload] = useState<{ name: string; provider: string; sent: number; total: number }>();
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let live = true;
+    // Upload progress comes from the native completion handler.
+    listen<{ name: string; provider: string; sent: number; total: number }>(
+      "storage-progress",
+      (event) => setUpload(event.payload.sent >= event.payload.total ? undefined : event.payload),
+    )
+      .then((unlisten) => {
+        if (live) stop = unlisten;
+        else unlisten();
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
   const scroll = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const refreshLock = useRef(false);
+  const seenStates = useRef(new Map<string, string>());
+  const primed = useRef(false);
+  const detailsOnStart = useRef(false);
+  useEffect(() => {
+    detailsOnStart.current = settings?.details_on_start ?? false;
+  }, [settings]);
 
   const refresh = useCallback(async () => {
     if (refreshLock.current) return;
@@ -139,6 +174,21 @@ export function App() {
         offset = page.next;
       }
       setJobs(result);
+      // Open a window once per transition into an active transfer. The first
+      // refresh only records states, so launching the app opens nothing.
+      const first = !primed.current;
+      primed.current = true;
+      for (const job of result) {
+        const before = seenStates.current.get(job.id);
+        if (
+          !first &&
+          detailsOnStart.current &&
+          ["Probing", "Downloading"].includes(job.state) &&
+          !["Probing", "Downloading", "Verifying"].includes(before ?? "")
+        )
+          void api.openDetails(job.id).catch(() => {});
+        seenStates.current.set(job.id, job.state);
+      }
       setConnected(true);
       setHasMore(offset !== null);
       const speed = result.reduce((sum, job) => sum + job.speed, 0);
@@ -171,6 +221,21 @@ export function App() {
       clearInterval(interval);
     };
   }, [refresh]);
+
+  // Reload on open so limits set from detail windows are shown and preserved.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let live = true;
+    void api
+      .settings()
+      .then((value) => {
+        if (live) setSettings(value);
+      })
+      .catch((e) => setError(friendlyError(e)));
+    return () => {
+      live = false;
+    };
+  }, [settingsOpen]);
 
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
@@ -369,6 +434,7 @@ export function App() {
         <button onClick={() => setTorrentOpen(true)}>Add torrent</button>
         <button onClick={() => setFileOpen(true)}>Add FTP / SFTP</button>
         <button onClick={() => setMediaOpen(true)}>Add media</button>
+        <button onClick={() => setCrawlOpen(true)}>Crawl website</button>
         <button onClick={() => setPeerOpen(true)}>LAN Share</button>
         <nav aria-label="Download views">
           {views.map((name) => (
@@ -621,8 +687,12 @@ export function App() {
                     <button
                       aria-label={`Details for ${job.name}`}
                       onClick={() => {
-                        setSelected(job.id);
-                        setRename(job.name);
+                        // Own window like a classic download manager; the in-app
+                        // dialog remains for rename, priority and history actions.
+                        void api.openDetails(job.id).catch(() => {
+                          setSelected(job.id);
+                          setRename(job.name);
+                        });
                       }}
                     >
                       Details
@@ -662,6 +732,14 @@ export function App() {
               ? "Engine connected · durable checkpoints"
               : "Connecting to engine…"}
           </div>
+          {upload && (
+            <span>
+              Uploading {upload.name} to{" "}
+              {{ gdrive: "Google Drive", dropbox: "Dropbox", onedrive: "OneDrive" }[upload.provider] ??
+                upload.provider}{" "}
+              {upload.total ? Math.floor((upload.sent / upload.total) * 100) : 0}%
+            </span>
+          )}
           <span>
             {settings?.concurrency ?? "—"} simultaneous downloads · History
             entries {historyOffset + 1}–{historyOffset + jobs.length}
@@ -766,6 +844,28 @@ export function App() {
             Existing files are preserved. Filename conflicts receive a numbered
             suffix.
           </p>
+          <button
+            type="button"
+            disabled={urls.trim().split(/\s+/).filter(Boolean).length !== 1}
+            title="Lists the files inside a remote ZIP without downloading it"
+            onClick={() => setZipUrl(urls.trim())}
+          >
+            Preview ZIP contents
+          </button>
+          <button
+            type="button"
+            disabled={busy || urls.trim().split(/\s+/).filter(Boolean).length !== 1}
+            title="Replaces a single M3U, PLS or XSPF playlist link with the links it lists"
+            onClick={() => {
+              setError("");
+              void api
+                .expandPlaylist(urls.trim())
+                .then((links) => setUrls(links.slice(0, 100).join("\n")))
+                .catch((e) => setError(friendlyError(e)));
+            }}
+          >
+            Expand playlist
+          </button>
           <button className="primary" disabled={busy}>
             Start downloads
           </button>
@@ -813,6 +913,7 @@ export function App() {
       <Modal
         error={error}
         title="Download details"
+        wide
         open={!!selectedJob}
         onOpenChange={(open) => {
           if (!open) setSelected(undefined);
@@ -836,11 +937,18 @@ export function App() {
             {selectedJob.protocol === "torrent" && (
               <TorrentDiagnostics id={selectedJob.id} />
             )}
+            {selectedJob.error && (
+              <p role="alert" className="alert">
+                {friendlyError(selectedJob.error)}
+              </p>
+            )}
+            <DownloadDetails
+              key={selectedJob.id}
+              job={selectedJob}
+              busy={busy}
+              act={act}
+            />
             <dl>
-              <dt>Source</dt>
-              <dd>{selectedJob.url.replace(/^(hls|dash)\+/, "")}</dd>
-              <dt>Destination</dt>
-              <dd>{selectedJob.destination}</dd>
               <dt>Added</dt>
               <dd>{new Date(selectedJob.created_at).toLocaleString()}</dd>
               {selectedJob.state === "Completed" && (
@@ -851,62 +959,7 @@ export function App() {
                   </dd>
                 </>
               )}
-              {selectedJob.protocol !== "torrent" && (
-                <>
-                  <dt>
-                    {["ftp", "ftps", "sftp"].includes(selectedJob.protocol)
-                      ? "Resume identity"
-                      : selectedJob.protocol.startsWith("hls+") ||
-                          selectedJob.protocol.startsWith("dash+")
-                        ? "VOD plan fingerprint"
-                        : "Strong ETag"}
-                  </dt>
-                  <dd>
-                    {["ftp", "ftps", "sftp"].includes(selectedJob.protocol)
-                      ? "Remote size and modification time"
-                      : (selectedJob.etag ??
-                        "Unavailable — safe resume may restart from zero")}
-                  </dd>
-                  <dt>Transfer response</dt>
-                  <dd>
-                    {selectedJob.response_status ?? "Not sampled this session"}
-                  </dd>
-                  <dt>Time to response</dt>
-                  <dd>
-                    {selectedJob.response_latency_ms === null
-                      ? "Not sampled this session"
-                      : `${selectedJob.response_latency_ms.toFixed(0)} ms (includes admission and redirects)`}
-                  </dd>
-                  <dt>Retries</dt>
-                  <dd>{selectedJob.retries}</dd>
-                  <dt>Workers / segments</dt>
-                  <dd>
-                    {selectedJob.workers} active / {selectedJob.segments.length}{" "}
-                    total
-                  </dd>
-                </>
-              )}
             </dl>
-            {selectedJob.error && (
-              <p role="alert" className="alert">
-                {friendlyError(selectedJob.error)}
-              </p>
-            )}
-            <div className="segment-map" aria-label="Durable segment ownership">
-              {selectedJob.segments.map((segment) => (
-                <div key={segment.start}>
-                  <span>
-                    {bytes(segment.start)}–{bytes(segment.end)} ·{" "}
-                    {segment.state}
-                  </span>
-                  <progress
-                    aria-label={`Segment at byte ${segment.start}`}
-                    value={segment.bytes}
-                    max={segment.end - segment.start + 1}
-                  />
-                </div>
-              ))}
-            </div>
             {selectedJob.protocol !== "torrent" &&
               ["Paused", "Queued", "Failed"].includes(selectedJob.state) && (
                 <form
@@ -924,6 +977,33 @@ export function App() {
                     />
                   </label>
                   <button disabled={busy}>Rename</button>
+                </form>
+              )}
+            {selectedJob.protocol === "http" &&
+              ["Paused", "Failed"].includes(selectedJob.state) && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void act(selectedJob, { kind: "Refresh", value: newLink }).then(
+                      () => setNewLink(""),
+                    );
+                  }}
+                >
+                  <label>
+                    Replace link
+                    <input
+                      type="url"
+                      value={newLink}
+                      placeholder="Paste a fresh link to the same file"
+                      onChange={(e) => setNewLink(e.target.value)}
+                      required
+                    />
+                  </label>
+                  <p className="muted">
+                    For expired or signed links. Progress is kept when the new
+                    link serves the same file; then choose Resume.
+                  </p>
+                  <button disabled={busy}>Replace link</button>
                 </form>
               )}
             {selectedJob.state === "Queued" && (
@@ -958,16 +1038,6 @@ export function App() {
                   Download again
                 </button>
               )}
-              {!["Completed", "Cancelled"].includes(selectedJob.state) && (
-                <button
-                  disabled={busy}
-                  onClick={() => {
-                    void act(selectedJob, { kind: "Cancel" });
-                  }}
-                >
-                  Cancel download
-                </button>
-              )}
               <button
                 disabled={busy}
                 onClick={() => {
@@ -983,6 +1053,30 @@ export function App() {
             </p>
           </div>
         )}
+      </Modal>
+      <Modal
+        title="Crawl a website"
+        wide
+        open={crawlOpen}
+        onOpenChange={setCrawlOpen}
+      >
+        <Crawler
+          destination={destination}
+          done={() => {
+            setCrawlOpen(false);
+            void refresh();
+          }}
+        />
+      </Modal>
+      <Modal
+        title="ZIP contents"
+        wide
+        open={!!zipUrl}
+        onOpenChange={(open) => {
+          if (!open) setZipUrl(undefined);
+        }}
+      >
+        {zipUrl && <ZipPreview key={zipUrl} url={zipUrl} />}
       </Modal>
       <Modal
         title="Duplicate download found"
@@ -1031,9 +1125,16 @@ export function App() {
                   setRemoveJob(undefined);
                   setSelected(undefined);
                   if (rememberRemove && settings) {
-                    const next = { ...settings, confirm_remove: false, remove_files: removeFiles };
-                    setSettings(next);
-                    void api.setSettings(next).catch((e) => setError(friendlyError(e)));
+                    // Start from stored settings: detail windows edit limits and
+                    // completion actions independently of this window's copy.
+                    void api
+                      .settings()
+                      .then((fresh) => {
+                        const next = { ...fresh, confirm_remove: false, remove_files: removeFiles };
+                        setSettings(next);
+                        return api.setSettings(next);
+                      })
+                      .catch((e) => setError(friendlyError(e)));
                   }
                   void act(job, { kind: removeFiles ? "RemoveFiles" : "Remove" });
                 }}
@@ -1063,7 +1164,9 @@ export function App() {
               e.preventDefault();
               setBusy(true);
               void api
-                .setSettings(settings)
+                .settings()
+                // Completion actions belong to detail windows; never overwrite them here.
+                .then((fresh) => api.setSettings({ ...settings, completion: fresh.completion }))
                 .then(() => {
                   setDestination(settings.destination);
                   setSettingsOpen(false);
@@ -1170,6 +1273,18 @@ export function App() {
               />
               Desktop notifications on completion and failure
             </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={settings.details_on_start ?? false}
+                onChange={(e) =>
+                  setSettings({ ...settings, details_on_start: e.target.checked })
+                }
+              />
+              Open a download window when a download starts
+            </label>
+            <CloudSettings />
+            <StorageSettings />
             <button className="primary" disabled={busy}>
               Save settings
             </button>

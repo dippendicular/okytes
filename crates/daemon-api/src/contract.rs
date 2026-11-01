@@ -15,6 +15,63 @@ pub enum Scope {
     Admin,
 }
 
+/// Fine-grained permission narrowing a token below its scope. Plugin and MCP
+/// credentials carry an explicit list; a route outside the list is refused even
+/// when the scope would allow it. Unlisted routes are never reachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+pub enum Permission {
+    /// List and read jobs and history records.
+    #[serde(rename = "jobs:read")]
+    JobsRead,
+    /// Add HTTP, media and torrent jobs inside the configured download root.
+    #[serde(rename = "jobs:add")]
+    JobsAdd,
+    /// Pause, resume, cancel, remove and reprioritize jobs.
+    #[serde(rename = "jobs:control")]
+    JobsControl,
+    /// Subscribe to engine change notifications.
+    #[serde(rename = "events:read")]
+    EventsRead,
+    /// Inspect media manifests and torrents without creating jobs.
+    #[serde(rename = "media:inspect")]
+    MediaInspect,
+    /// Read queue and presentation settings.
+    #[serde(rename = "settings:read")]
+    SettingsRead,
+}
+
+impl Permission {
+    /// Every permission, in a stable order for prompts and documentation.
+    pub const ALL: [Permission; 6] = [
+        Permission::JobsRead,
+        Permission::JobsAdd,
+        Permission::JobsControl,
+        Permission::EventsRead,
+        Permission::MediaInspect,
+        Permission::SettingsRead,
+    ];
+    /// Least scope that grants this permission.
+    pub fn scope(self) -> Scope {
+        match self {
+            Permission::JobsRead | Permission::EventsRead | Permission::SettingsRead => {
+                Scope::ReadOnly
+            }
+            _ => Scope::Control,
+        }
+    }
+    /// Short human description for consent prompts.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Permission::JobsRead => "see your downloads, including their URLs and file paths",
+            Permission::JobsAdd => "start new downloads into your download folder",
+            Permission::JobsControl => "pause, resume, cancel and remove downloads",
+            Permission::EventsRead => "receive live download notifications",
+            Permission::MediaInspect => "inspect media manifests and torrents",
+            Permission::SettingsRead => "read Okytes settings",
+        }
+    }
+}
+
 /// Stable sanitized error response. Never contains submitted URLs or tokens.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiError {
@@ -84,6 +141,12 @@ pub struct IssueToken {
     pub scope: Scope,
     /// Positive expiry in seconds, at most 7,776,000.
     pub lifetime_secs: u32,
+    /// Optional permission list; requires a read-only or control scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<Permission>>,
+    /// Optional plugin or client identifier recorded for review and revocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Public token metadata; contains no token or stored digest.
@@ -97,6 +160,12 @@ pub struct TokenInfo {
     pub expires_at: i64,
     /// Whether this credential has been revoked.
     pub revoked: bool,
+    /// Permission list narrowing the scope; absent for unrestricted tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<Permission>>,
+    /// Plugin or client identifier supplied at issuance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Returned only once over the authenticated admin connection.

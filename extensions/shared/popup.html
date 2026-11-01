@@ -9,6 +9,11 @@
   <body>
     <div class="brand"><img src="brand/okytes_logo_transperant.png" alt="Okytes" /></div>
     <p id="status" role="status">Checking desktop connection…</p>
+    <label class="toggle"
+      ><input id="auto" type="checkbox" /> Send browser downloads to Okytes
+      automatically</label
+    >
+    <p id="auto-hint" class="hint"></p>
     <label for="urls">Download links</label
     ><textarea id="urls" rows="6" placeholder="One link per line"></textarea>
     <button id="send">Send to Okytes</button

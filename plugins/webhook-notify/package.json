@@ -1,0 +1,10 @@
+{
+  "name": "okytes-plugin-webhook-notify",
+  "version": "0.0.2",
+  "private": true,
+  "type": "module",
+  "description": "Official example Okytes plugin: download notifications to a webhook",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node index.mjs" },
+  "dependencies": { "@okytes/sdk": "file:../../dev-tools/sdk/packages/sdk-typescript" }
+}

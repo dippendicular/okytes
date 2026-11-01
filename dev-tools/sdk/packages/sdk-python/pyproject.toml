@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "okytes-sdk"
-version = "0.1.0"
+version = "0.0.2"
 description = "Typed asynchronous client for the Okytes transfer daemon"
 readme = "README.md"
 requires-python = ">=3.10"

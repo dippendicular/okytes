@@ -1,0 +1,13 @@
+.git
+.tools
+target
+artifacts
+portable
+vendor
+**/node_modules
+**/dist
+apps/daemon/web
+apps/desktop/src-tauri/binaries
+plugins/**/.okytes-token
+*.db
+*.db-*

@@ -10,6 +10,8 @@ members = [
     "apps/desktop/src-tauri",
     "crates/browser-bridge",
     "apps/native-host",
+    "apps/mcp",
+    "apps/cloud",
     "crates/daemon-api",
     "apps/daemon",
     "dev-tools/test-suite/benchmarks",
@@ -22,7 +24,7 @@ members = [
 exclude = ["vendor/librqbit", "vendor/librqbit-utp", "vendor/librqbit-dht", "vendor/librqbit-tracker-comms"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.2"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/dippendicular/okytes"
@@ -73,15 +75,15 @@ rand = "0.8"
 futures = "0.3"
 
 # Workspace crates
-okytes-core = { version = "=0.1.0", path = "crates/core" }
-okytes-transport-http = { version = "=0.1.0", path = "crates/transport-http" }
-okytes-persistence = { version = "=0.1.0", path = "crates/persistence" }
-okytes-test-support = { version = "=0.1.0", path = "dev-tools/test-suite/test-support" }
-okytes-torrent-types = { version = "=0.1.0", path = "crates/torrent-types" }
-okytes-transport-torrent = { version = "=0.1.0", path = "crates/transport-torrent" }
-okytes-transport-ftp = { version = "=0.1.0", path = "crates/transport-ftp" }
-okytes-transport-media = { version = "=0.1.0", path = "crates/transport-media" }
-okytes-sdk = { version = "=0.1.0", path = "crates/sdk" }
+okytes-core = { version = "=0.0.2", path = "crates/core" }
+okytes-transport-http = { version = "=0.0.2", path = "crates/transport-http" }
+okytes-persistence = { version = "=0.0.2", path = "crates/persistence" }
+okytes-test-support = { version = "=0.0.2", path = "dev-tools/test-suite/test-support" }
+okytes-torrent-types = { version = "=0.0.2", path = "crates/torrent-types" }
+okytes-transport-torrent = { version = "=0.0.2", path = "crates/transport-torrent" }
+okytes-transport-ftp = { version = "=0.0.2", path = "crates/transport-ftp" }
+okytes-transport-media = { version = "=0.0.2", path = "crates/transport-media" }
+okytes-sdk = { version = "=0.0.2", path = "crates/sdk" }
 
 [patch.crates-io]
 librqbit = { path = "vendor/librqbit" }

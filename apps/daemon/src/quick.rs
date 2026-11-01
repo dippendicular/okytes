@@ -249,6 +249,8 @@ pub(crate) async fn public(api: &Arc<Api>, request: Request) -> Response {
             .issue(IssueToken {
                 scope: Scope::Control,
                 lifetime_secs: LIFETIME,
+                permissions: None,
+                label: None,
             })
             .await
         else {

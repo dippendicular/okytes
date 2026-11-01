@@ -115,6 +115,33 @@ pub struct Settings {
     /// Keyboard shortcut for opening shortcut settings.
     #[serde(default = "default_help_shortcut")]
     pub shortcut_help: String,
+    /// Open a download's own details window when its transfer starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub details_on_start: Option<bool>,
+    /// Per-download actions run once after completion; at most 128 entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub completion: Option<Vec<CompletionAction>>,
+}
+
+/// What to do when one download completes. Removed after it runs.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct CompletionAction {
+    /// Job UUID.
+    pub id: String,
+    /// Open the file with its default application.
+    pub open_file: bool,
+    /// Reveal the file in the system file manager.
+    pub open_folder: bool,
+    /// Show a notification; overrides the global notification preference.
+    pub notify: bool,
+    /// Upload the file to a connected provider: gdrive, dropbox or onedrive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub upload: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -169,6 +196,9 @@ pub enum Action {
     Rename(String),
     /// Set queue priority, between -100 and 100.
     Priority(i32),
+    /// Replace an expired or broken link on a paused or failed job, keeping
+    /// progress when the new link serves the same file.
+    Refresh(String),
 }
 
 /// Display metadata and durable progress for one job.
@@ -230,6 +260,132 @@ pub struct Segment {
     pub state: String,
 }
 
+/// One transient network request serving part of a persisted segment.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct Connection {
+    /// Engine-assigned connection number.
+    pub id: u32,
+    /// First byte of the persisted segment this request serves.
+    pub segment_start: f64,
+    /// First requested byte.
+    pub start: f64,
+    /// Last requested byte; null when the resource size is unknown.
+    pub end: Option<f64>,
+    /// Bytes received on this connection.
+    pub bytes: f64,
+    /// Sampled bytes per second.
+    pub speed: f64,
+    /// Retry attempts made by this request.
+    pub retries: u32,
+    /// connecting, downloading, stalled or retrying.
+    pub state: String,
+    /// Milliseconds since the request started.
+    pub age_ms: f64,
+}
+
+/// Live single-job diagnostics. Session values are null when not yet sampled.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct Telemetry {
+    /// Durable job snapshot.
+    pub job: Job,
+    /// Active network requests; empty when idle.
+    pub connections: Vec<Connection>,
+    /// Server honoured byte ranges during this session's probe.
+    pub range_support: Option<bool>,
+    /// Last-Modified validator, when the server provided one.
+    pub last_modified: Option<String>,
+    /// Average bytes per second since this session started transferring.
+    pub average_speed: Option<f64>,
+    /// Highest sampled bytes per second this session.
+    pub peak_speed: Option<f64>,
+    /// Current adaptive or fixed connection limit.
+    pub concurrency_limit: Option<u32>,
+    /// A publisher SHA-256 was supplied for verification.
+    pub hash_expected: bool,
+    /// Bytes covered by a completed SHA-256 computation.
+    pub verified_bytes: f64,
+}
+
+/// Website crawl request.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct CrawlInput {
+    /// Starting page, http(s).
+    pub url: String,
+    /// Link levels to follow from the start page, 0–3.
+    pub depth: u32,
+    /// Only collect files hosted on the starting site.
+    pub same_host: bool,
+    /// File extensions to collect, e.g. `zip`; empty collects every non-page link.
+    pub extensions: Vec<String>,
+    /// Pages to visit, 1–200.
+    pub max_pages: u32,
+}
+
+/// One candidate file link found while crawling.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct CrawlLink {
+    /// Absolute link.
+    pub url: String,
+    /// Page where the link was found.
+    pub page: String,
+    /// Lowercase file extension, possibly empty.
+    pub extension: String,
+}
+
+/// Crawl outcome for review before adding downloads.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct CrawlResult {
+    /// Unique candidate links, at most 2,000.
+    pub links: Vec<CrawlLink>,
+    /// Pages fetched.
+    pub pages: u32,
+    /// Pages skipped because robots.txt disallows them.
+    pub skipped_by_robots: u32,
+    /// A page or link limit stopped the crawl early.
+    pub truncated: bool,
+}
+
+/// One entry from a remote ZIP central directory.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct ZipEntry {
+    /// Path inside the archive, as stored.
+    pub name: String,
+    /// Uncompressed bytes.
+    pub size: f64,
+    /// Compressed bytes.
+    pub compressed: f64,
+    /// ZIP compression method (0 stored, 8 deflate, others shown as numbers).
+    pub method: u32,
+    /// Entry is encrypted.
+    pub encrypted: bool,
+    /// Entry is a directory.
+    pub directory: bool,
+    /// Local modification time, `YYYY-MM-DD HH:MM`, when valid.
+    pub modified: Option<String>,
+}
+
+/// Remote ZIP listing read without downloading the archive.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct ZipListing {
+    /// Archive size in bytes.
+    pub archive_size: f64,
+    /// Entries in the central directory.
+    pub total_entries: f64,
+    /// More entries exist than were listed (at most 5,000 are returned).
+    pub truncated: bool,
+    /// Archive comment, when present.
+    pub comment: Option<String>,
+    /// Listed entries in directory order.
+    pub entries: Vec<ZipEntry>,
+}
+
 /// Bounded snapshot page; clients replace pages after a missed update.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -262,6 +418,33 @@ pub trait DesktopService: Send + Sync {
             ))
         })
     }
+    /// List a remote ZIP's contents using range requests, without a job.
+    fn inspect_zip(&self, url: String) -> Reply<'_, ZipListing> {
+        Box::pin(async move {
+            let _ = url;
+            Err(crate::error::EngineError::Config(
+                "ZIP preview is unavailable".into(),
+            ))
+        })
+    }
+    /// Expand an M3U, PLS or XSPF playlist into its listed links.
+    fn expand_playlist(&self, url: String) -> Reply<'_, Vec<String>> {
+        Box::pin(async move {
+            let _ = url;
+            Err(crate::error::EngineError::Config(
+                "playlist expansion is unavailable".into(),
+            ))
+        })
+    }
+    /// Collect candidate file links from a website, without creating jobs.
+    fn crawl(&self, input: CrawlInput) -> Reply<'_, CrawlResult> {
+        Box::pin(async move {
+            let _ = input;
+            Err(crate::error::EngineError::Config(
+                "website crawling is unavailable".into(),
+            ))
+        })
+    }
     /// Add one advanced request, preserving CLI options across backends.
     fn submit(&self, input: Submit) -> Reply<'_, String>;
     /// Pause the runnable queue with one admission lock and wait for all workers.
@@ -272,6 +455,15 @@ pub trait DesktopService: Send + Sync {
     fn list(&self, offset: u32) -> Reply<'_, Snapshot>;
     /// Get one job and its diagnostics.
     fn get(&self, id: String) -> Reply<'_, Job>;
+    /// Get one job with live connection telemetry from an embedded engine.
+    fn telemetry(&self, id: String) -> Reply<'_, Telemetry> {
+        Box::pin(async move {
+            let _ = id;
+            Err(crate::error::EngineError::Config(
+                "live telemetry is unavailable".into(),
+            ))
+        })
+    }
     /// Apply a validated control request.
     fn control(&self, id: String, action: Action) -> Reply<'_, ()>;
     /// Read versioned settings.

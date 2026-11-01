@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Okytes Cloud</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header>
+      <strong>Okytes Cloud</strong>
+      <span id="who"></span>
+      <button id="logout" hidden>Sign out</button>
+    </header>
+    <p id="alert" role="alert" hidden></p>
+
+    <main id="signin" hidden>
+      <section class="card narrow">
+        <h1>Sign in</h1>
+        <p id="owner-note" class="muted" hidden>
+          No accounts yet. The first account becomes this server's owner.
+        </p>
+        <form id="credentials">
+          <label>Email <input id="email" type="email" autocomplete="username" required /></label>
+          <label>Password <input id="password" type="password" autocomplete="current-password" minlength="10" required /></label>
+          <div class="row">
+            <button type="submit" class="primary">Sign in</button>
+            <button type="button" id="register">Create account</button>
+          </div>
+        </form>
+        <button type="button" id="forgot" class="link" hidden>Forgot password?</button>
+        <div id="providers" class="row"></div>
+        <p class="muted">Only accounts authorized by this server's owner can sign in.</p>
+      </section>
+    </main>
+
+    <main id="reset" hidden>
+      <section class="card narrow">
+        <h1>Choose a new password</h1>
+        <form id="reset-form">
+          <label>New password <input id="new-password" type="password" autocomplete="new-password" minlength="10" required /></label>
+          <button class="primary">Save password</button>
+        </form>
+      </section>
+    </main>
+
+    <main id="dashboard" hidden>
+      <section class="card">
+        <h2>Send a download to a device</h2>
+        <form id="enqueue">
+          <label>Link <input id="url" type="url" placeholder="https://example.com/file.zip" required /></label>
+          <div class="grid">
+            <label>File name (optional) <input id="filename" maxlength="200" /></label>
+            <label>Device
+              <select id="target"><option value="">First device that checks in</option></select>
+            </label>
+          </div>
+          <button class="primary">Add to queue</button>
+        </form>
+        <p class="muted">
+          The paired desktop picks the link up within about ten seconds while Okytes is running.
+          Links that need a browser sign-in may fail, because the desktop cannot use your browser session.
+        </p>
+      </section>
+
+      <section class="card">
+        <div class="head"><h2>Queue</h2><button id="refresh">Refresh</button></div>
+        <div class="scroll"><table id="queue"></table></div>
+      </section>
+
+      <section class="card">
+        <div class="head"><h2>Devices</h2><button id="pair">Pair a device</button></div>
+        <p id="pair-code" class="code" hidden></p>
+        <div class="scroll"><table id="devices"></table></div>
+      </section>
+
+      <section class="card">
+        <h2>Activity (last 30 days)</h2>
+        <div id="analytics" class="bars"></div>
+        <p id="states" class="muted"></p>
+      </section>
+
+      <section class="card">
+        <h2>History from all devices</h2>
+        <input id="search" placeholder="Filter history" aria-label="Filter history" />
+        <div class="scroll"><table id="history"></table></div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

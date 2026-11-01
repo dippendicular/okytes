@@ -6,6 +6,8 @@ The daemon owns the existing engine and durable queue in a headless process.
 Desktop, CLI and browser clients can disconnect without stopping its downloads.
 Its HTTP API is authenticated on every route, including the contract and events.
 
+**Hosting it on a server or in Docker:** see [SERVER.md](SERVER.md).
+
 ## Run locally
 
 From the repository root:
@@ -96,6 +98,31 @@ All operations use `/v1`; breaking changes require a new API version.
 | `/v1/capture` | POST | Idempotent M3 browser handoff. |
 | `/v1/events` | GET | Authenticated server-sent events. |
 | `/v1/tokens`, `/v1/tokens/{id}` | GET, POST / DELETE | Admin credential management. |
+| `/v1/jobs/{id}/telemetry` | GET | Live connections, segment states, average/peak speed, range support (0.0.2). |
+| `/v1/archive/inspect` | POST | List a remote ZIP's contents with range requests (0.0.2). |
+| `/v1/crawl` | POST | Collect file links from a website, honouring robots.txt (0.0.2). |
+| `/v1/playlist/expand` | POST | Expand an M3U, PLS or XSPF playlist (0.0.2). |
+
+The control action `{"kind":"Refresh","value":"<new link>"}` replaces an expired
+link on a paused or failed HTTP download and keeps progress when the new link
+serves the same file.
+
+### Permission-restricted tokens (0.0.2)
+
+`POST /v1/tokens` accepts optional `permissions` and `label` fields:
+
+```json
+{ "scope": "control", "lifetime_secs": 2592000,
+  "permissions": ["jobs:read", "jobs:add"], "label": "plugin:org.example.tool" }
+```
+
+A token with a permission list can use only the routes those permissions cover,
+even when its scope would allow more. Permission tokens cannot have the `admin`
+scope, and each permission must already fit the scope (`jobs:read`,
+`events:read` and `settings:read` need `read_only`; the others need `control`).
+Refusals return `403 missing_permission`. Existing tokens without a list are
+unchanged. The permission-to-route table is in [the plugin guide](../../plugins/README.md#permissions).
+`okytes-cli plugin-grant` issues these tokens from a reviewed plugin manifest.
 
 Event messages contain `Changed` engine events or `Resync`. A new subscriber gets
 `Resync`; a lagged subscriber must replace its state from `GET /v1/jobs`.

@@ -4,6 +4,9 @@ use okytes_desktop_service::{AppService, Session};
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
+mod cloud;
+mod merge;
+mod storage;
 mod updates;
 
 const CHROMIUM_EXTENSION_ID: &str = "lodlcbjagldkbkplgkhmhklfgpbgmpfb";
@@ -230,6 +233,141 @@ async fn get(service: State<'_, Service>, id: String) -> Result<Job, String> {
     service.get(id).await.map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn telemetry(
+    service: State<'_, Service>,
+    id: String,
+) -> Result<okytes_core::desktop::Telemetry, String> {
+    service.telemetry(id).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn storage_status(storage: State<'_, Arc<storage::Storage>>) -> Vec<storage::ProviderStatus> {
+    storage.status()
+}
+#[tauri::command]
+fn storage_configure(
+    storage: State<'_, Arc<storage::Storage>>,
+    provider: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<(), String> {
+    storage.configure(&provider, client_id, client_secret)
+}
+#[tauri::command]
+async fn storage_connect(
+    storage: State<'_, Arc<storage::Storage>>,
+    provider: String,
+) -> Result<(), String> {
+    storage.connect(&provider).await
+}
+#[tauri::command]
+fn storage_disconnect(
+    storage: State<'_, Arc<storage::Storage>>,
+    provider: String,
+) -> Result<(), String> {
+    storage.disconnect(&provider)
+}
+#[tauri::command]
+fn cloud_status(cloud: State<'_, Arc<cloud::Cloud>>) -> Option<cloud::CloudStatus> {
+    cloud.status()
+}
+#[tauri::command]
+async fn cloud_pair(
+    cloud: State<'_, Arc<cloud::Cloud>>,
+    url: String,
+    code: String,
+    name: String,
+) -> Result<cloud::CloudStatus, String> {
+    cloud.pair(url, code, name).await
+}
+#[tauri::command]
+fn cloud_history(cloud: State<'_, Arc<cloud::Cloud>>) -> Vec<serde_json::Value> {
+    cloud.remote_history()
+}
+#[tauri::command]
+fn cloud_unpair(cloud: State<'_, Arc<cloud::Cloud>>) -> Result<(), String> {
+    cloud.unpair()
+}
+#[tauri::command]
+async fn ffmpeg_status() -> Option<String> {
+    merge::ffmpeg_version().await
+}
+#[tauri::command]
+async fn plan_merge(
+    merges: State<'_, Arc<merge::Merges>>,
+    parts: Vec<String>,
+) -> Result<(), String> {
+    merges.plan(parts).await
+}
+#[tauri::command]
+async fn expand_playlist(service: State<'_, Service>, url: String) -> Result<Vec<String>, String> {
+    service.expand_playlist(url).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn crawl(
+    service: State<'_, Service>,
+    input: okytes_core::desktop::CrawlInput,
+) -> Result<okytes_core::desktop::CrawlResult, String> {
+    service.crawl(input).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn inspect_zip(
+    service: State<'_, Service>,
+    url: String,
+) -> Result<okytes_core::desktop::ZipListing, String> {
+    service.inspect_zip(url).await.map_err(|e| e.to_string())
+}
+/// Open (or focus) one download's own window. The window derives its job from
+/// its label, so no URL routing is needed in the bundled frontend.
+#[tauri::command]
+async fn open_details(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    // Labels allow only a narrow character set; a canonical UUID fits it.
+    if id.len() != 36 || !id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+        return Err("Invalid download ID".to_owned());
+    }
+    let label = format!("details-{}", id.to_ascii_lowercase());
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App("index.html".into()))
+        .title("Okytes download")
+        .inner_size(560.0, 640.0)
+        .min_inner_size(420.0, 420.0)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Launch the platform opener for a completed file or its folder.
+fn reveal(path: &std::path::Path, folder: bool) {
+    #[cfg(target_os = "windows")]
+    let result = if folder {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+    } else {
+        std::process::Command::new("explorer.exe").arg(path).spawn()
+    };
+    #[cfg(target_os = "macos")]
+    let result = if folder {
+        std::process::Command::new("open").arg("-R").arg(path).spawn()
+    } else {
+        std::process::Command::new("open").arg(path).spawn()
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open")
+        .arg(if folder {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        })
+        .spawn();
+    if let Err(error) = result {
+        tracing::warn!(%error, "completion action could not open the download");
+    }
+}
+
+#[tauri::command]
 async fn add(service: State<'_, Service>, input: AddInput) -> Result<Vec<String>, String> {
     service.add(input).await.map_err(|e| e.to_string())
 }
@@ -286,6 +424,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             open_quick,
             list,
             get,
+            telemetry,
+            open_details,
+            inspect_zip,
+            crawl,
+            expand_playlist,
+            ffmpeg_status,
+            plan_merge,
+            cloud_status,
+            storage_status,
+            storage_configure,
+            storage_connect,
+            storage_disconnect,
+            cloud_pair,
+            cloud_unpair,
+            cloud_history,
             add,
             control,
             settings,
@@ -313,6 +466,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let directory = std::env::var_os("OKYTES_DATA_DIR").map(std::path::PathBuf::from).unwrap_or(app.path().app_data_dir()?);
             if !directory.is_absolute() {return Err("OKYTES_DATA_DIR must be absolute".into());}
             std::fs::create_dir_all(&directory)?;
+            let cloud = cloud::Cloud::new(&directory);
+            app.manage(cloud.clone());
+            app.manage(Arc::new(storage::Storage::new(&directory)));
+            app.manage(Arc::new(merge::Merges::new(&directory)));
             // Re-run on every launch so upgrades and moved portable directories
             // repair the absolute native-host manifest path automatically.
             if let Err(error) = register_native_host() {
@@ -335,6 +492,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     Err(_) => tracing::warn!("browser bridge could not start; browser downloads remain available"),
                 }
             }
+            // Cloud sync needs the embedded queue owner for idempotent capture.
+            tauri::async_runtime::spawn(cloud.clone().run(session.clone()));
             session
             };
             app.manage(service.clone());
@@ -357,11 +516,86 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 _ => None,
                             };
+                            if let Some((id, _)) = message {
+                                let merges = handle.state::<Arc<merge::Merges>>().inner().clone();
+                                let (service, events) = (notifications.clone(), handle.clone());
+                                // ffmpeg may run for minutes; never block event handling.
+                                tauri::async_runtime::spawn(async move {
+                                    let Some(result) = merges.completed(service.as_ref(), &id.to_string()).await else {
+                                        return;
+                                    };
+                                    let (title, body) = match result {
+                                        Ok(path) => ("Tracks merged", path.display().to_string()),
+                                        Err(error) => {
+                                            tracing::warn!(%error, "media merge failed");
+                                            ("Merge failed", error)
+                                        }
+                                    };
+                                    let _ = events.notification().builder().title(title).body(body).show();
+                                });
+                            }
                             if let Some((id, title)) = message {
-                                if notifications
-                                    .settings()
-                                    .await
-                                    .is_ok_and(|s| s.notifications)
+                                let Ok(mut preferences) = notifications.settings().await else {
+                                    continue;
+                                };
+                                // A per-download completion choice runs once, then is removed.
+                                // A failure keeps the choice for a later resume.
+                                let key = id.to_string();
+                                let completed = title == "Download complete";
+                                let action = preferences.completion.as_mut().and_then(|actions| {
+                                    let index = actions.iter().position(|a| a.id == key)?;
+                                    if completed {
+                                        Some(actions.remove(index))
+                                    } else {
+                                        Some(actions[index].clone())
+                                    }
+                                });
+                                if let Some(action) = action.as_ref().filter(|_| completed) {
+                                    if let Ok(job) = notifications.get(key.clone()).await {
+                                        let path = std::path::Path::new(&job.destination);
+                                        if action.open_file {
+                                            reveal(path, false);
+                                        }
+                                        if action.open_folder {
+                                            reveal(path, true);
+                                        }
+                                        if let Some(provider) = action.upload.clone() {
+                                            let storage = handle.state::<Arc<storage::Storage>>().inner().clone();
+                                            let (path, name, handle) = (path.to_path_buf(), job.name.clone(), handle.clone());
+                                            // Uploads can take minutes; never block event handling.
+                                            tauri::async_runtime::spawn(async move {
+                                                let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                                                let (events, file, service) = (handle.clone(), name.clone(), provider.clone());
+                                                let progress = move |sent: u64| {
+                                                    let _ = events.emit(
+                                                        "storage-progress",
+                                                        serde_json::json!({ "name": file, "provider": service, "sent": sent, "total": total }),
+                                                    );
+                                                };
+                                                let result = storage.upload(&provider, &path, &progress).await;
+                                                let title = match &result {
+                                                    Ok(()) => format!("Uploaded to {}", storage::label(&provider)),
+                                                    Err(_) => format!("{} upload failed", storage::label(&provider)),
+                                                };
+                                                let body = match result {
+                                                    Ok(()) => name,
+                                                    Err(error) => {
+                                                        tracing::warn!(%error, "storage upload failed");
+                                                        format!("{name}: {error}")
+                                                    }
+                                                };
+                                                let _ = handle.notification().builder().title(title).body(body).show();
+                                            });
+                                        }
+                                    }
+                                }
+                                let notify = action.as_ref().map_or(preferences.notifications, |a| a.notify);
+                                if action.is_some() && completed {
+                                    if let Err(error) = notifications.set_settings(preferences).await {
+                                        tracing::warn!(%error, "completion action could not be cleared");
+                                    }
+                                }
+                                if notify
                                 {
                                     if let Ok(job) = notifications.get(id.to_string()).await {
                                         if let Err(error) = handle

@@ -15,5 +15,18 @@ asyncio.run(main())
 
 The async client provides `download`, batch `add`, media/torrent inspection, torrent creation, file credential authorization and peer sending. Call `supports(protocol, operation)` before optional operations. Creation calls use durable idempotency keys, retry retryable failures with bounded backoff, and event iteration reconnects with its last SSE cursor before yielding `Resync`.
 
+## Plugins (preview, 0.0.2)
+
+```python
+from okytes import Plugin, PluginManifest
+
+plugin = Plugin.from_environment(PluginManifest.load("."))
+plugin.require("jobs:read")
+snapshot = await plugin.client.jobs()
+```
+
+`Plugin.from_environment` reads `OKYTES_DAEMON_URL` and `OKYTES_PLUGIN_TOKEN_FILE`
+(written by `okytes-cli plugin-grant`). See the [plugin guide](../../../../plugins/README.md).
+
 The client never opens SQLite or starts the daemon. Plain HTTP is allowed only on loopback; remote endpoints require normal HTTPS certificate validation. Destination paths are on the daemon host, credentials remain request-local, and peer operations require prior pairing and receiver approval.
 

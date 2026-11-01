@@ -139,3 +139,6 @@ venv/
 # Private torrent staging and interrupted atomic publication
 *.torrent-data/
 .okytes-torrent-*/
+
+# Plugin tokens issued by `okytes-cli plugin-grant` (secrets)
+.okytes-token

@@ -21,17 +21,21 @@
 //! This crate must never depend on a GUI framework, Tauri, browser APIs, or
 //! OS-specific crates. Platform code lives behind traits implemented outside core.
 
+pub mod archive;
+pub mod crawl;
 pub mod desktop;
 pub mod engine;
 pub mod error;
 pub mod fairness;
 pub mod files;
 pub mod peer;
+pub mod playlist;
 pub mod range;
 pub mod scheduler;
 pub mod service;
 pub mod state;
 pub mod store;
+pub mod telemetry;
 pub mod traffic;
 pub mod transport;
 pub mod types;

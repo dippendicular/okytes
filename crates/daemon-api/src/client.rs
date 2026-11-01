@@ -391,6 +391,27 @@ impl DesktopService for Client {
                 .await
         })
     }
+    fn inspect_zip(&self, url: String) -> Reply<'_, okytes_core::desktop::ZipListing> {
+        Box::pin(async move {
+            self.request(Method::POST, "v1/archive/inspect", Some(&url))
+                .await
+        })
+    }
+    fn expand_playlist(&self, url: String) -> Reply<'_, Vec<String>> {
+        Box::pin(async move { self.request(Method::POST, "v1/playlist/expand", Some(&url)).await })
+    }
+    fn crawl(
+        &self,
+        input: okytes_core::desktop::CrawlInput,
+    ) -> Reply<'_, okytes_core::desktop::CrawlResult> {
+        Box::pin(async move { self.request(Method::POST, "v1/crawl", Some(&input)).await })
+    }
+    fn telemetry(&self, id: String) -> Reply<'_, okytes_core::desktop::Telemetry> {
+        Box::pin(async move {
+            self.request(Method::GET, &format!("v1/jobs/{id}/telemetry"), None::<&()>)
+                .await
+        })
+    }
     fn authorize_file(
         &self,
         id: String,

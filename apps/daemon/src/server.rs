@@ -299,6 +299,40 @@ fn required(method: &Method, path: &str) -> Scope {
         Scope::Control
     }
 }
+/// Permission needed by a permission-restricted token. `Ok(None)` marks contract
+/// introspection; `Err` marks routes such tokens can never reach (peers, tokens,
+/// configuration, browser capture and file credentials).
+fn permission(method: &Method, path: &str) -> Result<Option<Permission>, ()> {
+    let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
+    let get = *method == Method::GET;
+    let post = *method == Method::POST;
+    match parts.as_slice() {
+        ["v1", "openapi.json"] | ["v1", "capabilities"] if get => Ok(None),
+        ["v1", "jobs"] | ["v1", "jobs", _] | ["v1", "records"] | ["v1", "records", _]
+            if get =>
+        {
+            Ok(Some(Permission::JobsRead))
+        }
+        ["v1", "torrents", id] if get && *id != "inspect" => Ok(Some(Permission::JobsRead)),
+        ["v1", "jobs"] | ["v1", "submit"] | ["v1", "torrents"] if post => {
+            Ok(Some(Permission::JobsAdd))
+        }
+        ["v1", "jobs", _, "control"] if post => Ok(Some(Permission::JobsControl)),
+        ["v1", "jobs", _, "telemetry"] if get => Ok(Some(Permission::JobsRead)),
+        ["v1", "events"] if get => Ok(Some(Permission::EventsRead)),
+        ["v1", "media", "inspect"]
+        | ["v1", "torrents", "inspect"]
+        | ["v1", "archive", "inspect"]
+        | ["v1", "crawl"]
+        | ["v1", "playlist", "expand"]
+            if post =>
+        {
+            Ok(Some(Permission::MediaInspect))
+        }
+        ["v1", "settings"] if get => Ok(Some(Permission::SettingsRead)),
+        _ => Err(()),
+    }
+}
 async fn guard(State(api): State<Arc<Api>>, mut request: Request, next: Next) -> Response {
     if api.stopping.load(std::sync::atomic::Ordering::Acquire) {
         return error(StatusCode::SERVICE_UNAVAILABLE, "shutting_down");
@@ -374,6 +408,13 @@ async fn guard(State(api): State<Arc<Api>>, mut request: Request, next: Next) ->
     if info.scope < scope {
         return error(StatusCode::FORBIDDEN, "insufficient_scope");
     }
+    if let Some(granted) = &info.permissions {
+        match permission(request.method(), request.uri().path()) {
+            Ok(None) => {}
+            Ok(Some(needed)) if granted.contains(&needed) => {}
+            _ => return error(StatusCode::FORBIDDEN, "missing_permission"),
+        }
+    }
     if request
         .headers()
         .get("content-length")
@@ -438,6 +479,10 @@ pub fn router(api: Arc<Api>) -> Router {
         .route("/v1/jobs/{id}/control", post(control))
         .route("/v1/submit", post(submit))
         .route("/v1/media/inspect", post(inspect_media))
+        .route("/v1/archive/inspect", post(inspect_zip))
+        .route("/v1/crawl", post(crawl))
+        .route("/v1/playlist/expand", post(expand_playlist))
+        .route("/v1/jobs/{id}/telemetry", get(telemetry))
         .route("/v1/jobs/{id}/credentials", post(authorize_file))
         .route("/v1/records", get(records))
         .route("/v1/records/{id}", get(record))
@@ -1334,7 +1379,7 @@ async fn spec() -> Json<utoipa::openapi::OpenApi> {
 async fn capabilities() -> Json<Capabilities> {
     Json(Capabilities {
         api_version: "1".into(),
-        sdk_compatibility: ">=0.1.0,<0.2.0".into(),
+        sdk_compatibility: ">=0.0.2,<0.1.0".into(),
         protocols: vec![
             ProtocolCapability {
                 protocol: "http".into(),
@@ -1406,7 +1451,7 @@ async fn capabilities() -> Json<Capabilities> {
     })
 }
 #[derive(OpenApi)]
-#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(quick_pair,inspect_media,authorize_file,list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,capabilities,records,record,config,set_config,add_torrent,inspect_torrent,torrent,peer_identity,peer_trusts,peer_approve,peer_revoke,peer_requests,peer_send,peer_devices,peer_discovery_setting,peer_set_discovery,peer_decide),components(schemas(Update,ApiError)),modifiers(&Security))]
+#[openapi(info(title="Okytes daemon API",version="1.0.0"),paths(quick_pair,inspect_media,inspect_zip,crawl,expand_playlist,telemetry,authorize_file,list,add,submit,job,control,pause_all,settings,set_settings,capture,tokens,issue,revoke,events,spec,capabilities,records,record,config,set_config,add_torrent,inspect_torrent,torrent,peer_identity,peer_trusts,peer_approve,peer_revoke,peer_requests,peer_send,peer_devices,peer_discovery_setting,peer_set_discovery,peer_decide),components(schemas(Update,ApiError)),modifiers(&Security))]
 struct Contract;
 struct Security;
 impl utoipa::Modify for Security {
@@ -1602,6 +1647,34 @@ async fn inspect_media(
         .await
         .map(Json)
         .map_err(rejection)
+}
+#[utoipa::path(post,path="/v1/archive/inspect",request_body=String,responses((status=200,body=okytes_core::desktop::ZipListing)),security(("bearer"=[])))]
+async fn inspect_zip(
+    State(api): State<Arc<Api>>,
+    Json(url): Json<String>,
+) -> Result<Json<okytes_core::desktop::ZipListing>, Response> {
+    api.session.inspect_zip(url).await.map(Json).map_err(rejection)
+}
+#[utoipa::path(post,path="/v1/playlist/expand",request_body=String,responses((status=200,body=Vec<String>)),security(("bearer"=[])))]
+async fn expand_playlist(
+    State(api): State<Arc<Api>>,
+    Json(url): Json<String>,
+) -> Result<Json<Vec<String>>, Response> {
+    api.session.expand_playlist(url).await.map(Json).map_err(rejection)
+}
+#[utoipa::path(post,path="/v1/crawl",request_body=okytes_core::desktop::CrawlInput,responses((status=200,body=okytes_core::desktop::CrawlResult)),security(("bearer"=[])))]
+async fn crawl(
+    State(api): State<Arc<Api>>,
+    Json(input): Json<okytes_core::desktop::CrawlInput>,
+) -> Result<Json<okytes_core::desktop::CrawlResult>, Response> {
+    api.session.crawl(input).await.map(Json).map_err(rejection)
+}
+#[utoipa::path(get,path="/v1/jobs/{id}/telemetry",params(("id"=String,Path)),responses((status=200,body=okytes_core::desktop::Telemetry)),security(("bearer"=[])))]
+async fn telemetry(
+    State(api): State<Arc<Api>>,
+    Path(id): Path<String>,
+) -> Result<Json<okytes_core::desktop::Telemetry>, Response> {
+    api.session.telemetry(id).await.map(Json).map_err(rejection)
 }
 #[utoipa::path(post,path="/v1/jobs/{id}/credentials",params(("id"=String,Path)),request_body=okytes_core::desktop::FileCredentials,responses((status=200)),security(("bearer"=[])))]
 async fn authorize_file(

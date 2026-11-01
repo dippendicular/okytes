@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/v1/archive/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["inspect_zip"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/capabilities": {
         parameters: {
             query?: never;
@@ -46,6 +62,22 @@ export interface paths {
         get: operations["config"];
         put: operations["set_config"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/crawl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["crawl"];
         delete?: never;
         options?: never;
         head?: never;
@@ -126,6 +158,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["authorize_file"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["telemetry"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -303,6 +351,22 @@ export interface paths {
         put?: never;
         post?: never;
         delete: operations["peer_revoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/playlist/expand": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["expand_playlist"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -490,6 +554,9 @@ export interface components {
             kind: "Remove";
         } | {
             /** @enum {string} */
+            kind: "RemoveFiles";
+        } | {
+            /** @enum {string} */
             kind: "Rename";
             /** @description Rename an idle job's destination filename. */
             value: string;
@@ -501,6 +568,14 @@ export interface components {
              * @description Set queue priority, between -100 and 100.
              */
             value: number;
+        } | {
+            /** @enum {string} */
+            kind: "Refresh";
+            /**
+             * @description Replace an expired or broken link on a paused or failed job, keeping
+             *     progress when the new link serves the same file.
+             */
+            value: string;
         };
         /** @description Validated batch creation input, limited to 100 URLs. */
         AddInput: {
@@ -550,11 +625,114 @@ export interface components {
             /** @description HTTP(S), or an explicitly selected hls+/dash+ source URL, without userinfo. */
             url: string;
         };
+        /** @description What to do when one download completes. Removed after it runs. */
+        CompletionAction: {
+            /** @description Job UUID. */
+            id: string;
+            /** @description Show a notification; overrides the global notification preference. */
+            notify: boolean;
+            /** @description Open the file with its default application. */
+            open_file: boolean;
+            /** @description Reveal the file in the system file manager. */
+            open_folder: boolean;
+            /** @description Upload the file to a connected provider: gdrive, dropbox or onedrive. */
+            upload?: string | null;
+        };
         /**
          * @description Strategy for handling filename conflicts at the destination.
          * @enum {string}
          */
         ConflictStrategy: "Rename" | "Overwrite" | "Fail";
+        /** @description One transient network request serving part of a persisted segment. */
+        Connection: {
+            /**
+             * Format: double
+             * @description Milliseconds since the request started.
+             */
+            age_ms: number;
+            /**
+             * Format: double
+             * @description Bytes received on this connection.
+             */
+            bytes: number;
+            /**
+             * Format: double
+             * @description Last requested byte; null when the resource size is unknown.
+             */
+            end?: number | null;
+            /**
+             * Format: int32
+             * @description Engine-assigned connection number.
+             */
+            id: number;
+            /**
+             * Format: int32
+             * @description Retry attempts made by this request.
+             */
+            retries: number;
+            /**
+             * Format: double
+             * @description First byte of the persisted segment this request serves.
+             */
+            segment_start: number;
+            /**
+             * Format: double
+             * @description Sampled bytes per second.
+             */
+            speed: number;
+            /**
+             * Format: double
+             * @description First requested byte.
+             */
+            start: number;
+            /** @description connecting, downloading, stalled or retrying. */
+            state: string;
+        };
+        /** @description Website crawl request. */
+        CrawlInput: {
+            /**
+             * Format: int32
+             * @description Link levels to follow from the start page, 0–3.
+             */
+            depth: number;
+            /** @description File extensions to collect, e.g. `zip`; empty collects every non-page link. */
+            extensions: string[];
+            /**
+             * Format: int32
+             * @description Pages to visit, 1–200.
+             */
+            max_pages: number;
+            /** @description Only collect files hosted on the starting site. */
+            same_host: boolean;
+            /** @description Starting page, http(s). */
+            url: string;
+        };
+        /** @description One candidate file link found while crawling. */
+        CrawlLink: {
+            /** @description Lowercase file extension, possibly empty. */
+            extension: string;
+            /** @description Page where the link was found. */
+            page: string;
+            /** @description Absolute link. */
+            url: string;
+        };
+        /** @description Crawl outcome for review before adding downloads. */
+        CrawlResult: {
+            /** @description Unique candidate links, at most 2,000. */
+            links: components["schemas"]["CrawlLink"][];
+            /**
+             * Format: int32
+             * @description Pages fetched.
+             */
+            pages: number;
+            /**
+             * Format: int32
+             * @description Pages skipped because robots.txt disallows them.
+             */
+            skipped_by_robots: number;
+            /** @description A page or link limit stopped the crawl early. */
+            truncated: boolean;
+        };
         /**
          * @description Peer transfer direction, independent from HTTP download semantics.
          * @enum {string}
@@ -718,11 +896,15 @@ export interface components {
         Hash: string;
         /** @description Administration request. The maximum permitted lifetime is 90 days. */
         IssueToken: {
+            /** @description Optional plugin or client identifier recorded for review and revocation. */
+            label?: string | null;
             /**
              * Format: int32
              * @description Positive expiry in seconds, at most 7,776,000.
              */
             lifetime_secs: number;
+            /** @description Optional permission list; requires a read-only or control scope. */
+            permissions?: components["schemas"]["Permission"][] | null;
             /** @description Capability scope. */
             scope: components["schemas"]["Scope"];
         };
@@ -740,6 +922,8 @@ export interface components {
              * @description Durable downloaded bytes.
              */
             bytes: number;
+            /** @description RFC 3339 creation timestamp. */
+            created_at: string;
             /** @description Final destination. */
             destination: string;
             /** @description Last actionable engine error. */
@@ -786,6 +970,8 @@ export interface components {
              * @description Resource size, if known.
              */
             total?: number | null;
+            /** @description RFC 3339 last state/progress timestamp; terminal jobs use completion time. */
+            updated_at: string;
             /** @description Source URL explicitly entered by the user. */
             url: string;
             /**
@@ -998,6 +1184,13 @@ export interface components {
             revision: number;
             revoked: boolean;
         };
+        /**
+         * @description Fine-grained permission narrowing a token below its scope. Plugin and MCP
+         *     credentials carry an explicit list; a route outside the list is refused even
+         *     when the scope would allow it. Unlisted routes are never reachable.
+         * @enum {string}
+         */
+        Permission: "jobs:read" | "jobs:add" | "jobs:control" | "events:read" | "media:inspect" | "settings:read";
         ProtocolCapability: {
             approval_required: boolean;
             credential_kind?: string | null;
@@ -1118,15 +1311,35 @@ export interface components {
         };
         /** @description Persisted presentation and queue settings. */
         Settings: {
+            /** @description User-selected accent: blue, violet, teal or rose. */
+            accent?: string;
+            /** @description Enable decorative motion and animated transitions. */
+            animations?: boolean;
+            /** @description Per-download actions run once after completion; at most 128 entries. */
+            completion?: components["schemas"]["CompletionAction"][] | null;
             /**
              * Format: int32
              * @description Concurrent jobs, from one to 32.
              */
             concurrency: number;
+            /** @description Ask before removing an item from history. */
+            confirm_remove?: boolean;
+            /** @description Comfortable or compact interface density. */
+            density?: string;
             /** @description Absolute default destination directory. */
             destination: string;
+            /** @description Open a download's own details window when its transfer starts. */
+            details_on_start?: boolean | null;
             /** @description Native completion/failure notifications. */
             notifications: boolean;
+            /** @description Remember whether removal also deletes the downloaded file. */
+            remove_files?: boolean;
+            /** @description Keyboard shortcut for adding downloads. */
+            shortcut_add?: string;
+            /** @description Keyboard shortcut for opening shortcut settings. */
+            shortcut_help?: string;
+            /** @description Keyboard shortcut for focusing search. */
+            shortcut_search?: string;
             /** @description Light, dark or system. */
             theme: string;
             /** @description Shared runtime bandwidth and queue schedule policy. */
@@ -1168,6 +1381,39 @@ export interface components {
             /** @description Supported transfer URL without userinfo. */
             url: string;
         };
+        /** @description Live single-job diagnostics. Session values are null when not yet sampled. */
+        Telemetry: {
+            /**
+             * Format: double
+             * @description Average bytes per second since this session started transferring.
+             */
+            average_speed?: number | null;
+            /**
+             * Format: int32
+             * @description Current adaptive or fixed connection limit.
+             */
+            concurrency_limit?: number | null;
+            /** @description Active network requests; empty when idle. */
+            connections: components["schemas"]["Connection"][];
+            /** @description A publisher SHA-256 was supplied for verification. */
+            hash_expected: boolean;
+            /** @description Durable job snapshot. */
+            job: components["schemas"]["Job"];
+            /** @description Last-Modified validator, when the server provided one. */
+            last_modified?: string | null;
+            /**
+             * Format: double
+             * @description Highest sampled bytes per second this session.
+             */
+            peak_speed?: number | null;
+            /** @description Server honoured byte ranges during this session's probe. */
+            range_support?: boolean | null;
+            /**
+             * Format: double
+             * @description Bytes covered by a completed SHA-256 computation.
+             */
+            verified_bytes: number;
+        };
         /** @description Public token metadata; contains no token or stored digest. */
         TokenInfo: {
             /**
@@ -1177,6 +1423,10 @@ export interface components {
             expires_at: number;
             /** @description Revocation identifier. */
             id: string;
+            /** @description Plugin or client identifier supplied at issuance. */
+            label?: string | null;
+            /** @description Permission list narrowing the scope; absent for unrestricted tokens. */
+            permissions?: components["schemas"]["Permission"][] | null;
             /** @description Whether this credential has been revoked. */
             revoked: boolean;
             /** @description Effective capability scope. */
@@ -1410,6 +1660,51 @@ export interface components {
             /** @enum {string} */
             kind: "Resync";
         };
+        /** @description One entry from a remote ZIP central directory. */
+        ZipEntry: {
+            /**
+             * Format: double
+             * @description Compressed bytes.
+             */
+            compressed: number;
+            /** @description Entry is a directory. */
+            directory: boolean;
+            /** @description Entry is encrypted. */
+            encrypted: boolean;
+            /**
+             * Format: int32
+             * @description ZIP compression method (0 stored, 8 deflate, others shown as numbers).
+             */
+            method: number;
+            /** @description Local modification time, `YYYY-MM-DD HH:MM`, when valid. */
+            modified?: string | null;
+            /** @description Path inside the archive, as stored. */
+            name: string;
+            /**
+             * Format: double
+             * @description Uncompressed bytes.
+             */
+            size: number;
+        };
+        /** @description Remote ZIP listing read without downloading the archive. */
+        ZipListing: {
+            /**
+             * Format: double
+             * @description Archive size in bytes.
+             */
+            archive_size: number;
+            /** @description Archive comment, when present. */
+            comment?: string | null;
+            /** @description Listed entries in directory order. */
+            entries: components["schemas"]["ZipEntry"][];
+            /**
+             * Format: double
+             * @description Entries in the central directory.
+             */
+            total_entries: number;
+            /** @description More entries exist than were listed (at most 5,000 are returned). */
+            truncated: boolean;
+        };
     };
     responses: never;
     parameters: never;
@@ -1419,6 +1714,83 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    inspect_zip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "text/plain": string;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZipListing"];
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     capabilities: {
         parameters: {
             query?: never;
@@ -1661,6 +2033,83 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    crawl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrawlInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrawlResult"];
                 };
             };
             /** @description Invalid input */
@@ -2117,6 +2566,81 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    telemetry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Telemetry"];
+                };
             };
             /** @description Invalid input */
             400: {
@@ -3091,6 +3615,83 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PeerTrust"];
+                };
+            };
+            /** @description Invalid input */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing, expired or revoked bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Host, Origin or scope rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request deadline */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Request body exceeds limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate, request or subscriber admission limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    expand_playlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "text/plain": string;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
             /** @description Invalid input */

@@ -57,6 +57,8 @@ async fn real_api_previews_downloads_and_stops_indefinite_seeding() {
         .issue(okytes_daemon_api::contract::IssueToken {
             scope: okytes_daemon_api::contract::Scope::Control,
             lifetime_secs: 60,
+            permissions: None,
+            label: None,
         })
         .await
         .unwrap()

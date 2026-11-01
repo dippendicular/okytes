@@ -1,0 +1,12 @@
+[package]
+name = "okytes-mcp"
+description = "Local Model Context Protocol server for the Okytes daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+okytes-core.workspace = true
+okytes-daemon-api = { version = "=0.0.2", path = "../../crates/daemon-api" }
+tokio.workspace = true
+serde_json.workspace = true

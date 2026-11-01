@@ -17,12 +17,12 @@ tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 okytes-core.workspace = true
 okytes-torrent-types.workspace = true
-okytes-desktop-service = { version = "=0.1.0", path = "../service" }
-okytes-daemon-api = { version = "=0.1.0", path = "../../../crates/daemon-api" }
+okytes-desktop-service = { version = "=0.0.2", path = "../service" }
+okytes-daemon-api = { version = "=0.0.2", path = "../../../crates/daemon-api" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-okytes-browser-bridge = { version = "=0.1.0", path = "../../../crates/browser-bridge" }
+okytes-browser-bridge = { version = "=0.0.2", path = "../../../crates/browser-bridge" }
 # Native Tauri 2 installers; legacy Tauri 1 ZIP extraction is not used.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 base64 = "0.22"
@@ -30,7 +30,10 @@ minisign-verify = "0.3"
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+url.workspace = true
+rand.workspace = true
+sha2.workspace = true
 futures.workspace = true
 
 [dev-dependencies]

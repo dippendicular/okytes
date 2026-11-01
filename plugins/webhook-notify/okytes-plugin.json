@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "id": "org.okytes.webhook-notify",
+  "name": "Webhook notifications",
+  "version": "0.0.2",
+  "description": "Posts a message to ntfy, Discord, Slack or a JSON webhook when a download completes or fails.",
+  "permissions": ["events:read", "jobs:read"]
+}

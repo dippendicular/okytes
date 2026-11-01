@@ -85,6 +85,8 @@ impl Tokens {
                     scope: Scope::Admin,
                     expires_at: chrono::Utc::now().timestamp() + 90 * 86400,
                     revoked: false,
+                    permissions: None,
+                    label: None,
                 },
                 hash: hash(&token),
             });
@@ -115,6 +117,27 @@ impl Tokens {
         if input.lifetime_secs == 0 || input.lifetime_secs > 90 * 86400 {
             return Err(invalid());
         }
+        // A permission list may only narrow a non-admin scope, and each listed
+        // permission must already be granted by that scope.
+        if let Some(permissions) = &input.permissions {
+            let unique: std::collections::HashSet<_> = permissions.iter().collect();
+            if input.scope == Scope::Admin
+                || permissions.is_empty()
+                || unique.len() != permissions.len()
+                || permissions.iter().any(|p| p.scope() > input.scope)
+            {
+                return Err(invalid());
+            }
+        }
+        if input.label.as_ref().is_some_and(|label| {
+            label.is_empty()
+                || label.len() > 128
+                || !label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-:".contains(&b))
+        }) {
+            return Err(invalid());
+        }
         let mut records = self.records.lock().await;
         // Revoked/expired entries can be reclaimed; no unbounded credential history.
         records.retain(|r| !r.info.revoked && r.info.expires_at > chrono::Utc::now().timestamp());
@@ -126,6 +149,8 @@ impl Tokens {
             scope: input.scope,
             expires_at: chrono::Utc::now().timestamp() + i64::from(input.lifetime_secs),
             revoked: false,
+            permissions: input.permissions,
+            label: input.label,
         };
         let random: [u8; 32] = rand::random();
         let token = format!(

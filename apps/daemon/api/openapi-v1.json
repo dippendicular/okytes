@@ -10,6 +10,99 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/v1/archive/inspect": {
+      "post": {
+        "tags": [],
+        "operationId": "inspect_zip",
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZipListing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, Origin or scope rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "Request deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate, request or subscriber admission limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/capabilities": {
       "get": {
         "tags": [],
@@ -288,6 +381,99 @@
               "application/json": {
                 "schema": {
                   "default": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, Origin or scope rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "Request deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate, request or subscriber admission limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/crawl": {
+      "post": {
+        "tags": [],
+        "operationId": "crawl",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrawlInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlResult"
                 }
               }
             }
@@ -848,6 +1034,99 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, Origin or scope rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "Request deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate, request or subscriber admission limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/jobs/{id}/telemetry": {
+      "get": {
+        "tags": [],
+        "operationId": "telemetry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Telemetry"
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid input",
@@ -2019,6 +2298,102 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PeerTrust"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, Origin or scope rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "Request deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate, request or subscriber admission limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/playlist/expand": {
+      "post": {
+        "tags": [],
+        "operationId": "expand_playlist",
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -3263,6 +3638,21 @@
           },
           {
             "type": "object",
+            "description": "Remove history, partial data and the published file/directory.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "RemoveFiles"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "Rename an idle job's destination filename.",
             "required": [
               "value",
@@ -3299,6 +3689,26 @@
                 "type": "integer",
                 "format": "int32",
                 "description": "Set queue priority, between -100 and 100."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Replace an expired or broken link on a paused or failed job, keeping\nprogress when the new link serves the same file.",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "Refresh"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "description": "Replace an expired or broken link on a paused or failed job, keeping\nprogress when the new link serves the same file."
               }
             }
           }
@@ -3458,6 +3868,42 @@
         },
         "additionalProperties": false
       },
+      "CompletionAction": {
+        "type": "object",
+        "description": "What to do when one download completes. Removed after it runs.",
+        "required": [
+          "id",
+          "open_file",
+          "open_folder",
+          "notify"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Job UUID."
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Show a notification; overrides the global notification preference."
+          },
+          "open_file": {
+            "type": "boolean",
+            "description": "Open the file with its default application."
+          },
+          "open_folder": {
+            "type": "boolean",
+            "description": "Reveal the file in the system file manager."
+          },
+          "upload": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Upload the file to a connected provider: gdrive, dropbox or onedrive."
+          }
+        },
+        "additionalProperties": false
+      },
       "ConflictStrategy": {
         "type": "string",
         "description": "Strategy for handling filename conflicts at the destination.",
@@ -3466,6 +3912,169 @@
           "Overwrite",
           "Fail"
         ]
+      },
+      "Connection": {
+        "type": "object",
+        "description": "One transient network request serving part of a persisted segment.",
+        "required": [
+          "id",
+          "segment_start",
+          "start",
+          "bytes",
+          "speed",
+          "retries",
+          "state",
+          "age_ms"
+        ],
+        "properties": {
+          "age_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "Milliseconds since the request started."
+          },
+          "bytes": {
+            "type": "number",
+            "format": "double",
+            "description": "Bytes received on this connection."
+          },
+          "end": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Last requested byte; null when the resource size is unknown."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Engine-assigned connection number.",
+            "minimum": 0
+          },
+          "retries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Retry attempts made by this request.",
+            "minimum": 0
+          },
+          "segment_start": {
+            "type": "number",
+            "format": "double",
+            "description": "First byte of the persisted segment this request serves."
+          },
+          "speed": {
+            "type": "number",
+            "format": "double",
+            "description": "Sampled bytes per second."
+          },
+          "start": {
+            "type": "number",
+            "format": "double",
+            "description": "First requested byte."
+          },
+          "state": {
+            "type": "string",
+            "description": "connecting, downloading, stalled or retrying."
+          }
+        }
+      },
+      "CrawlInput": {
+        "type": "object",
+        "description": "Website crawl request.",
+        "required": [
+          "url",
+          "depth",
+          "same_host",
+          "extensions",
+          "max_pages"
+        ],
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Link levels to follow from the start page, 0–3.",
+            "minimum": 0
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "File extensions to collect, e.g. `zip`; empty collects every non-page link."
+          },
+          "max_pages": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pages to visit, 1–200.",
+            "minimum": 0
+          },
+          "same_host": {
+            "type": "boolean",
+            "description": "Only collect files hosted on the starting site."
+          },
+          "url": {
+            "type": "string",
+            "description": "Starting page, http(s)."
+          }
+        }
+      },
+      "CrawlLink": {
+        "type": "object",
+        "description": "One candidate file link found while crawling.",
+        "required": [
+          "url",
+          "page",
+          "extension"
+        ],
+        "properties": {
+          "extension": {
+            "type": "string",
+            "description": "Lowercase file extension, possibly empty."
+          },
+          "page": {
+            "type": "string",
+            "description": "Page where the link was found."
+          },
+          "url": {
+            "type": "string",
+            "description": "Absolute link."
+          }
+        }
+      },
+      "CrawlResult": {
+        "type": "object",
+        "description": "Crawl outcome for review before adding downloads.",
+        "required": [
+          "links",
+          "pages",
+          "skipped_by_robots",
+          "truncated"
+        ],
+        "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CrawlLink"
+            },
+            "description": "Unique candidate links, at most 2,000."
+          },
+          "pages": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pages fetched.",
+            "minimum": 0
+          },
+          "skipped_by_robots": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pages skipped because robots.txt disallows them.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "A page or link limit stopped the crawl early."
+          }
+        }
       },
       "Direction": {
         "type": "string",
@@ -3859,11 +4468,28 @@
           "lifetime_secs"
         ],
         "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional plugin or client identifier recorded for review and revocation."
+          },
           "lifetime_secs": {
             "type": "integer",
             "format": "int32",
             "description": "Positive expiry in seconds, at most 7,776,000.",
             "minimum": 0
+          },
+          "permissions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Permission"
+            },
+            "description": "Optional permission list; requires a read-only or control scope."
           },
           "scope": {
             "$ref": "#/components/schemas/Scope",
@@ -3898,6 +4524,8 @@
           "name",
           "url",
           "destination",
+          "created_at",
+          "updated_at",
           "state",
           "bytes",
           "speed",
@@ -3911,6 +4539,10 @@
             "type": "number",
             "format": "double",
             "description": "Durable downloaded bytes."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "RFC 3339 creation timestamp."
           },
           "destination": {
             "type": "string",
@@ -3993,6 +4625,10 @@
             ],
             "format": "double",
             "description": "Resource size, if known."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "RFC 3339 last state/progress timestamp; terminal jobs use completion time."
           },
           "url": {
             "type": "string",
@@ -4527,6 +5163,18 @@
           }
         }
       },
+      "Permission": {
+        "type": "string",
+        "description": "Fine-grained permission narrowing a token below its scope. Plugin and MCP\ncredentials carry an explicit list; a route outside the list is refused even\nwhen the scope would allow it. Unlisted routes are never reachable.",
+        "enum": [
+          "jobs:read",
+          "jobs:add",
+          "jobs:control",
+          "events:read",
+          "media:inspect",
+          "settings:read"
+        ]
+      },
       "ProtocolCapability": {
         "type": "object",
         "required": [
@@ -4783,19 +5431,68 @@
           "notifications"
         ],
         "properties": {
+          "accent": {
+            "type": "string",
+            "description": "User-selected accent: blue, violet, teal or rose."
+          },
+          "animations": {
+            "type": "boolean",
+            "description": "Enable decorative motion and animated transitions."
+          },
+          "completion": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CompletionAction"
+            },
+            "description": "Per-download actions run once after completion; at most 128 entries."
+          },
           "concurrency": {
             "type": "integer",
             "format": "int32",
             "description": "Concurrent jobs, from one to 32.",
             "minimum": 0
           },
+          "confirm_remove": {
+            "type": "boolean",
+            "description": "Ask before removing an item from history."
+          },
+          "density": {
+            "type": "string",
+            "description": "Comfortable or compact interface density."
+          },
           "destination": {
             "type": "string",
             "description": "Absolute default destination directory."
           },
+          "details_on_start": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Open a download's own details window when its transfer starts."
+          },
           "notifications": {
             "type": "boolean",
             "description": "Native completion/failure notifications."
+          },
+          "remove_files": {
+            "type": "boolean",
+            "description": "Remember whether removal also deletes the downloaded file."
+          },
+          "shortcut_add": {
+            "type": "string",
+            "description": "Keyboard shortcut for adding downloads."
+          },
+          "shortcut_help": {
+            "type": "string",
+            "description": "Keyboard shortcut for opening shortcut settings."
+          },
+          "shortcut_search": {
+            "type": "string",
+            "description": "Keyboard shortcut for focusing search."
           },
           "theme": {
             "type": "string",
@@ -4912,6 +5609,77 @@
         },
         "additionalProperties": false
       },
+      "Telemetry": {
+        "type": "object",
+        "description": "Live single-job diagnostics. Session values are null when not yet sampled.",
+        "required": [
+          "job",
+          "connections",
+          "hash_expected",
+          "verified_bytes"
+        ],
+        "properties": {
+          "average_speed": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Average bytes per second since this session started transferring."
+          },
+          "concurrency_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Current adaptive or fixed connection limit.",
+            "minimum": 0
+          },
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Connection"
+            },
+            "description": "Active network requests; empty when idle."
+          },
+          "hash_expected": {
+            "type": "boolean",
+            "description": "A publisher SHA-256 was supplied for verification."
+          },
+          "job": {
+            "$ref": "#/components/schemas/Job",
+            "description": "Durable job snapshot."
+          },
+          "last_modified": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last-Modified validator, when the server provided one."
+          },
+          "peak_speed": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Highest sampled bytes per second this session."
+          },
+          "range_support": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Server honoured byte ranges during this session's probe."
+          },
+          "verified_bytes": {
+            "type": "number",
+            "format": "double",
+            "description": "Bytes covered by a completed SHA-256 computation."
+          }
+        }
+      },
       "TokenInfo": {
         "type": "object",
         "description": "Public token metadata; contains no token or stored digest.",
@@ -4930,6 +5698,23 @@
           "id": {
             "type": "string",
             "description": "Revocation identifier."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Plugin or client identifier supplied at issuance."
+          },
+          "permissions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Permission"
+            },
+            "description": "Permission list narrowing the scope; absent for unrestricted tokens."
           },
           "revoked": {
             "type": "boolean",
@@ -5382,6 +6167,95 @@
           }
         ],
         "description": "Bounded stream notifications. Clients must replace snapshots on Resync."
+      },
+      "ZipEntry": {
+        "type": "object",
+        "description": "One entry from a remote ZIP central directory.",
+        "required": [
+          "name",
+          "size",
+          "compressed",
+          "method",
+          "encrypted",
+          "directory"
+        ],
+        "properties": {
+          "compressed": {
+            "type": "number",
+            "format": "double",
+            "description": "Compressed bytes."
+          },
+          "directory": {
+            "type": "boolean",
+            "description": "Entry is a directory."
+          },
+          "encrypted": {
+            "type": "boolean",
+            "description": "Entry is encrypted."
+          },
+          "method": {
+            "type": "integer",
+            "format": "int32",
+            "description": "ZIP compression method (0 stored, 8 deflate, others shown as numbers).",
+            "minimum": 0
+          },
+          "modified": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local modification time, `YYYY-MM-DD HH:MM`, when valid."
+          },
+          "name": {
+            "type": "string",
+            "description": "Path inside the archive, as stored."
+          },
+          "size": {
+            "type": "number",
+            "format": "double",
+            "description": "Uncompressed bytes."
+          }
+        }
+      },
+      "ZipListing": {
+        "type": "object",
+        "description": "Remote ZIP listing read without downloading the archive.",
+        "required": [
+          "archive_size",
+          "total_entries",
+          "truncated",
+          "entries"
+        ],
+        "properties": {
+          "archive_size": {
+            "type": "number",
+            "format": "double",
+            "description": "Archive size in bytes."
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Archive comment, when present."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZipEntry"
+            },
+            "description": "Listed entries in directory order."
+          },
+          "total_entries": {
+            "type": "number",
+            "format": "double",
+            "description": "Entries in the central directory."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More entries exist than were listed (at most 5,000 are returned)."
+          }
+        }
       }
     },
     "securitySchemes": {

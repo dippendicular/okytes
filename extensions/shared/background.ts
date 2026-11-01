@@ -1,6 +1,13 @@
-import { api, type Tab } from "./compat";
+import { api, type DownloadItem, type Tab } from "./compat";
 import { defaults, normalizeRules, validUrl, type Rules } from "./rules";
-import { handoff, intercept, nativeRequest, mediaSource } from "./capture";
+import {
+  BridgeError,
+  describe,
+  handoff,
+  intercept,
+  nativeRequest,
+  mediaSource,
+} from "./capture";
 import { ownPage } from "./messages";
 
 // Sensitive state is bounded memory only. Worker suspension deliberately loses
@@ -8,6 +15,43 @@ import { ownPage } from "./messages";
 const observed = new Map<string, { at: number; headers: [string, string][] }>();
 const bypass = new Map<string, number>();
 const candidates = new Map<number, string[]>();
+// Duplicate suppression: URLs being handed off now, and URLs Okytes accepted
+// in the last few seconds through any path (context menu, popup, automatic).
+const inflight = new Set<string>();
+const accepted = new Map<string, number>();
+// Chromium assigns filenames after onCreated; type rules wait for that event.
+const awaitingName = new Map<number, DownloadItem>();
+const menus = api.contextMenus ?? api.menus;
+
+function remember(url: string): void {
+  if (accepted.size >= 64) accepted.delete(accepted.keys().next().value ?? "");
+  accepted.set(url, Date.now() + 10000);
+}
+// Diagnostics name the host only; full URLs can carry signed tokens.
+function host(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "invalid URL";
+  }
+}
+let badgeTimer: ReturnType<typeof setTimeout> | undefined;
+function feedback(error: string | null, detail = ""): void {
+  const message = error ? describe(error) : "Sent to Okytes";
+  if (error) console.warn(`[okytes] ${error}${detail ? ` (${detail})` : ""}`);
+  const action = api.action;
+  if (!action) return;
+  clearTimeout(badgeTimer);
+  void Promise.all([
+    action.setBadgeText({ text: error ? "!" : "✓" }),
+    action.setBadgeBackgroundColor({ color: error ? "#c62828" : "#2e7d32" }),
+    action.setTitle({ title: `Okytes — ${message}` }),
+  ]).catch(() => {});
+  badgeTimer = setTimeout(() => {
+    void action.setBadgeText({ text: "" }).catch(() => {});
+    void action.setTitle({ title: "Okytes" }).catch(() => {});
+  }, 8000);
+}
 async function rules(): Promise<Rules> {
   const stored = await api.storage.local.get("rules");
   try {
@@ -39,16 +83,52 @@ async function sessionHeaders(url: string): Promise<[string, string][]> {
   return result;
 }
 
-api.downloads.onCreated.addListener((item) => {
-  void rules().then((value) =>
-    intercept(
+async function automatic(item: DownloadItem): Promise<void> {
+  const url = item.finalUrl || item.url;
+  if (item.byExtensionId || inflight.has(url)) return;
+  if ((accepted.get(url) ?? 0) > Date.now()) {
+    // Okytes already owns this URL from an explicit capture moments ago.
+    await api.downloads.cancel(item.id).catch(() => {});
+    return;
+  }
+  const value = await rules();
+  if (!value.enabled) return;
+  if (!item.filename && value.types.length) {
+    if (awaitingName.size >= 32)
+      awaitingName.delete(awaitingName.keys().next().value ?? -1);
+    awaitingName.set(item.id, item);
+    setTimeout(() => awaitingName.delete(item.id), 15000);
+    return;
+  }
+  inflight.add(url);
+  try {
+    const captured = await intercept(
       api,
       item,
       value,
-      (bypass.get(item.finalUrl || item.url) ?? 0) > Date.now(),
+      (bypass.get(url) ?? 0) > Date.now(),
       sessionHeaders,
-    ),
-  );
+      (error) => feedback(error, host(url)),
+    );
+    if (captured) remember(url);
+  } finally {
+    inflight.delete(url);
+  }
+}
+api.downloads.onCreated.addListener((item) => {
+  void automatic(item).catch(() => feedback("host_exited"));
+});
+api.downloads.onChanged.addListener((delta) => {
+  const item = awaitingName.get(delta.id);
+  if (!item) return;
+  if (delta.state?.current && delta.state.current !== "in_progress") {
+    awaitingName.delete(delta.id);
+    return;
+  }
+  const filename = delta.filename?.current;
+  if (!filename) return;
+  awaitingName.delete(delta.id);
+  void automatic({ ...item, filename }).catch(() => feedback("host_exited"));
 });
 
 // Optional webRequest has no blanket granted host access. The browser only
@@ -87,11 +167,21 @@ async function observe(): Promise<void> {
         if (observed.get(request.url) === record) observed.delete(request.url);
       }, 30000);
     };
-    api.webRequest.onBeforeSendHeaders.addListener(
-      listener,
-      { urls: ["http://*/*", "https://*/*"] },
-      ["requestHeaders"],
-    );
+    try {
+      // Chromium hides Referer and Cookie unless extraHeaders is requested.
+      api.webRequest.onBeforeSendHeaders.addListener(
+        listener,
+        { urls: ["http://*/*", "https://*/*"] },
+        ["requestHeaders", "extraHeaders"],
+      );
+    } catch {
+      // Firefox rejects the Chromium-only option and exposes these headers anyway.
+      api.webRequest.onBeforeSendHeaders.addListener(
+        listener,
+        { urls: ["http://*/*", "https://*/*"] },
+        ["requestHeaders"],
+      );
+    }
     api.webRequest.onBeforeRequest.addListener(
       (request) => {
         if (
@@ -136,11 +226,11 @@ async function collect(tab: Tab): Promise<string[]> {
 async function captureUrls(
   urls: string[],
   media = false,
-): Promise<{ accepted: number; failed: number }> {
+): Promise<{ accepted: number; failed: number; errors: string[] }> {
   if (!urls.length || urls.length > 100 || urls.some((url) => !validUrl(url)))
     throw new Error("Use 1–100 HTTP/HTTPS links");
-  let accepted = 0;
-  let failed = 0;
+  let ok = 0;
+  const codes = new Set<string>();
   for (const url of urls) {
     try {
       const response = await handoff(api, {
@@ -149,13 +239,20 @@ async function captureUrls(
         sha256: null,
         headers: await sessionHeaders(url),
       });
-      if (response.ok) accepted++;
-      else failed++;
-    } catch {
-      failed++;
+      if (response.ok) {
+        ok++;
+        remember(url);
+      } else codes.add(response.error ?? "capture_rejected");
+    } catch (error) {
+      const code = error instanceof BridgeError ? error.code : "invalid_url";
+      codes.add(code);
+      // Without a host every remaining link fails the same way.
+      if (code === "host_missing") break;
     }
   }
-  return { accepted, failed };
+  const errors = [...codes];
+  feedback(ok ? null : (errors[0] ?? "capture_rejected"), `${urls.length} link(s)`);
+  return { accepted: ok, failed: urls.length - ok, errors: errors.map(describe) };
 }
 async function message(value: unknown, tab?: Tab): Promise<unknown> {
   if (!value || typeof value !== "object") throw new Error("Invalid command");
@@ -173,12 +270,16 @@ async function message(value: unknown, tab?: Tab): Promise<unknown> {
   // Content scripts may only mark a bypass for their own tab. Queue management
   // commands must originate from the extension's own pages, not a page script.
   if (tab) throw new Error("Command requires the extension popup");
-  if (input.kind === "ping")
-    return nativeRequest(api, {
+  if (input.kind === "ping") {
+    const response = await nativeRequest(api, {
       version: 1,
       id: crypto.randomUUID(),
       operation: { kind: "Ping" },
     });
+    return response.ok
+      ? response
+      : { ...response, error: describe(response.error) };
+  }
   if (
     (input.kind === "capture" || input.kind === "capture_media") &&
     Array.isArray(input.urls) &&
@@ -205,45 +306,62 @@ api.runtime.onMessage.addListener((value, sender, reply) => {
   const privileged = ownPage(sender, api.runtime.id, api.runtime.getURL(""));
   void message(value, privileged ? undefined : sender.tab)
     .then(reply)
-    .catch(() =>
+    .catch((error: unknown) =>
       reply({
+        // Our own errors carry actionable text without URLs or credentials.
         error:
-          "Request failed. Check the app, site permission and link selection.",
+          error instanceof Error && error.message
+            ? error.message
+            : "Request failed. Check the app, site permission and link selection.",
       }),
     );
   return true;
 });
-async function menus(): Promise<void> {
-  await api.contextMenus.removeAll();
-  api.contextMenus.create({
+async function register(): Promise<void> {
+  await menus.removeAll();
+  menus.create({
     id: "capture-link",
     title: "Download with Okytes",
     contexts: ["link"],
   });
-  api.contextMenus.create({
+  menus.create({
     id: "capture-media",
     title: "Download file with Okytes",
     contexts: ["video", "audio", "image"],
   });
-  api.contextMenus.create({
+  menus.create({
     id: "collect-links",
     title: "Collect links with Okytes",
     contexts: ["page"],
   });
 }
+// Registered on install and on every browser start: Firefox event pages do not
+// reliably keep menus across restarts, and re-creating them is idempotent.
 api.runtime.onInstalled.addListener(() => {
-  void menus();
+  void register();
 });
-api.contextMenus.onClicked.addListener((info, tab) => {
+api.runtime.onStartup.addListener(() => {
+  void register();
+});
+menus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "collect-links") {
-    void collect(tab)
-      .then(captureUrls)
-      .catch(() => {});
+    void collect(tab ?? {})
+      .then((urls) => captureUrls(urls))
+      .catch((error: unknown) =>
+        feedback(error instanceof BridgeError ? error.code : "invalid_url"),
+      );
     return;
   }
   const url = info.linkUrl || info.srcUrl;
-  if (!url || !validUrl(url) || tab.incognito) return;
+  if (!url || !validUrl(url)) {
+    feedback("invalid_url");
+    return;
+  }
+  // Private windows stay in the browser, matching automatic capture.
+  if (tab?.incognito) return;
   void captureUrls([url]).then((result) => {
+    // Explicit fallback: the user asked for this file, so the browser fetches
+    // it and the toolbar badge explains why Okytes did not.
     if (!result.accepted) return api.downloads.download({ url });
   });
 });

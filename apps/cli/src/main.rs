@@ -35,6 +35,26 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Review an okytes-plugin.json and issue its permission-restricted token.
+    PluginGrant {
+        /// Plugin directory or manifest file.
+        manifest: PathBuf,
+        /// Confirm the listed permissions without an interactive prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Token lifetime in days (1-90).
+        #[arg(long, default_value_t = 30)]
+        days: u32,
+        /// Token file to create; defaults to `.okytes-token` beside the manifest.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// List plugin and other permission-restricted tokens.
+    PluginList,
+    /// Revoke a plugin token by its ID.
+    PluginRevoke {
+        id: Uuid,
+    },
     /// Show this daemon's public peer certificate and fingerprint.
     PeerIdentity,
     /// List current DNS-SD address hints. Discovery is never identity proof.
@@ -104,6 +124,15 @@ enum Command {
         run: bool,
         #[arg(long,default_value="rename",value_parser=["rename","fail","overwrite"])]
         conflict: String,
+    },
+    /// Live terminal view of the daemon's downloads (Ctrl+C to exit).
+    Watch {
+        /// Seconds between refreshes (1-60).
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
+        /// Show only active and queued downloads.
+        #[arg(long)]
+        active: bool,
     },
     /// Print a bounded page (256 jobs) in priority order.
     List {
@@ -215,6 +244,12 @@ async fn execute(args: Args) -> Result<()> {
     ) {
         bail!("peer operations require the authenticated daemon; provide --daemon-url and --token-file");
     }
+    if matches!(
+        args.command,
+        Command::PluginGrant { .. } | Command::PluginList | Command::PluginRevoke { .. }
+    ) {
+        bail!("plugins use the daemon's token registry; provide --daemon-url and an admin --token-file");
+    }
     let store = Arc::new(SqliteStore::open(&args.db)?);
     let mut config = store.config().await?;
     config.database_path = args.db.clone();
@@ -249,6 +284,12 @@ async fn execute(args: Args) -> Result<()> {
         | Command::PeerRequests { .. }
         | Command::PeerDecide { .. } => bail!("peer operations require daemon mode"),
         Command::Quick { .. } => bail!("Quick Download requires an explicitly selected daemon"),
+        Command::PluginGrant { .. } | Command::PluginList | Command::PluginRevoke { .. } => {
+            bail!("plugins require daemon mode")
+        }
+        Command::Watch { .. } => {
+            bail!("watch shows a running daemon; provide --daemon-url and --token-file")
+        }
         Command::MediaInspect { url } => {
             let media =
                 okytes_transport_media::MediaTransport::new(Arc::new(HttpTransport::new(&config)?));
@@ -450,10 +491,256 @@ async fn remote_wait(
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
 }
+/// Show the plugin's requested permissions, then issue a narrowly scoped token
+/// and store it in a new private file. The token is never printed.
+async fn plugin_grant(
+    client: &okytes_daemon_api::Client,
+    path: &std::path::Path,
+    yes: bool,
+    days: u32,
+    out: Option<PathBuf>,
+) -> Result<()> {
+    use okytes_daemon_api::contract::{IssueToken, IssuedToken, Scope};
+    let manifest = okytes_daemon_api::plugin::Manifest::load(path).map_err(anyhow::Error::msg)?;
+    if !(1..=90).contains(&days) {
+        bail!("--days must be between 1 and 90");
+    }
+    eprintln!("{} {} ({})", manifest.name, manifest.version, manifest.id);
+    if !manifest.description.is_empty() {
+        eprintln!("{}", manifest.description);
+    }
+    eprintln!("This plugin asks to:");
+    for permission in &manifest.permissions {
+        eprintln!("  - {}", permission.describe());
+    }
+    if !yes {
+        eprint!("Grant these permissions? Type 'yes' to continue: ");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if answer.trim() != "yes" {
+            bail!("permissions were not granted");
+        }
+    }
+    let target = match out {
+        Some(path) => path,
+        None => {
+            let directory = if path.is_dir() {
+                path.to_path_buf()
+            } else {
+                path.parent().map(PathBuf::from).unwrap_or_default()
+            };
+            directory.join(".okytes-token")
+        }
+    };
+    let scope = manifest
+        .permissions
+        .iter()
+        .map(|p| p.scope())
+        .max()
+        .unwrap_or(Scope::ReadOnly);
+    // Create the file before issuing so an existing token is never overwritten
+    // and a failed write cannot leave an unrecorded live credential.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options
+        .open(&target)
+        .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", target.display()))?;
+    let issued: IssuedToken = match client
+        .request(
+            reqwest::Method::POST,
+            "v1/tokens",
+            Some(&IssueToken {
+                scope,
+                lifetime_secs: days * 86400,
+                permissions: Some(manifest.permissions.clone()),
+                label: Some(manifest.label()),
+            }),
+        )
+        .await
+    {
+        Ok(issued) => issued,
+        Err(error) => {
+            drop(file);
+            let _ = std::fs::remove_file(&target);
+            return Err(error.into());
+        }
+    };
+    use std::io::Write;
+    if let Err(error) = file
+        .write_all(issued.token.as_bytes())
+        .and_then(|_| file.sync_all())
+    {
+        let _ = std::fs::remove_file(&target);
+        let _: Result<bool, _> = client
+            .request(
+                reqwest::Method::DELETE,
+                &format!("v1/tokens/{}", issued.info.id),
+                None::<&()>,
+            )
+            .await;
+        bail!("token file could not be written ({error}); the token was revoked");
+    }
+    eprintln!(
+        "Granted. Token {} stored in {} (expires in {days} days).",
+        issued.info.id,
+        target.display()
+    );
+    eprintln!(
+        "Run the plugin with OKYTES_DAEMON_URL and OKYTES_PLUGIN_TOKEN_FILE set to that file."
+    );
+    eprintln!("Revoke with: okytes-cli plugin-revoke {}", issued.info.id);
+    Ok(())
+}
+fn human(bytes: f64) -> String {
+    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes.max(0.0);
+    let mut unit = 0;
+    while value >= 1024.0 && unit < units.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{value:.0} {}", units[unit])
+    } else {
+        format!("{value:.1} {}", units[unit])
+    }
+}
+
+/// Redraws a compact table each interval. Plain ANSI: works over SSH and in
+/// any modern terminal, including Windows Terminal.
+async fn watch(client: &okytes_daemon_api::Client, interval: u64, active: bool) -> Result<()> {
+    use okytes_core::desktop::DesktopService;
+    use std::io::Write;
+    if !(1..=60).contains(&interval) {
+        bail!("--interval must be 1-60 seconds");
+    }
+    let width = 24usize;
+    loop {
+        let snapshot = client.list(0).await?;
+        let jobs: Vec<_> = snapshot
+            .jobs
+            .iter()
+            .filter(|j| {
+                !active
+                    || matches!(
+                        j.state.as_str(),
+                        "Queued" | "Probing" | "Downloading" | "Verifying"
+                    )
+            })
+            .take(40)
+            .collect();
+        let speed: f64 = snapshot.jobs.iter().map(|j| j.speed).sum();
+        let running = snapshot
+            .jobs
+            .iter()
+            .filter(|j| j.state == "Downloading")
+            .count();
+        let mut out = String::from("\x1b[H\x1b[2J");
+        out.push_str(&format!(
+            "\x1b[1mOkytes\x1b[0m  {running} downloading  ·  {}/s total  ·  {}  ·  Ctrl+C to exit\n\n",
+            human(speed),
+            chrono::Local::now().format("%H:%M:%S")
+        ));
+        out.push_str(&format!(
+            "{:<11} {:<width$} {:>6} {:>11} {:>8}  {}\n",
+            "STATE", "PROGRESS", "%", "SPEED", "ETA", "NAME"
+        ));
+        for job in &jobs {
+            let fraction = job
+                .total
+                .filter(|t| *t > 0.0)
+                .map(|t| (job.bytes / t).clamp(0.0, 1.0))
+                .or((job.state == "Completed").then_some(1.0));
+            let bar = match fraction {
+                Some(f) => {
+                    let filled = (f * width as f64).round() as usize;
+                    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
+                }
+                None => format!("{:<width$}", format!("{} so far", human(job.bytes))),
+            };
+            let percent = fraction.map_or("—".into(), |f| format!("{:.1}", f * 100.0));
+            let eta = match (job.total, job.speed > 0.0 && job.state == "Downloading") {
+                (Some(total), true) => {
+                    let s = ((total - job.bytes) / job.speed).max(0.0) as u64;
+                    if s >= 3600 {
+                        format!("{}h{:02}m", s / 3600, s / 60 % 60)
+                    } else {
+                        format!("{}m{:02}s", s / 60, s % 60)
+                    }
+                }
+                _ => "—".into(),
+            };
+            let colour = match job.state.as_str() {
+                "Downloading" => "\x1b[36m",
+                "Completed" | "Seeding" => "\x1b[32m",
+                "Failed" | "Cancelled" => "\x1b[31m",
+                "Paused" => "\x1b[33m",
+                _ => "\x1b[0m",
+            };
+            let name: String = job.name.chars().take(48).collect();
+            out.push_str(&format!(
+                "{colour}{:<11}\x1b[0m {bar} {:>6} {:>11} {:>8}  {name}\n",
+                job.state,
+                percent,
+                if job.state == "Downloading" {
+                    format!("{}/s", human(job.speed))
+                } else {
+                    "—".into()
+                },
+                eta,
+            ));
+            if job.state == "Failed" {
+                if let Some(error) = &job.error {
+                    let short: String = error.chars().take(100).collect();
+                    out.push_str(&format!("            \x1b[2m{short}\x1b[0m\n"));
+                }
+            }
+        }
+        if jobs.is_empty() {
+            out.push_str("  No downloads. Add one with: okytes-cli --daemon-url … add <url>\n");
+        }
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(out.as_bytes())?;
+        stdout.flush()?;
+        drop(stdout);
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!();
+                return Ok(());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(interval)) => {}
+        }
+    }
+}
+
 async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result<()> {
     use okytes_core::desktop::{Action, DesktopService, Submit};
     use reqwest::Method;
     match args.command {
+        Command::PluginGrant {
+            manifest,
+            yes,
+            days,
+            out,
+        } => plugin_grant(&client, &manifest, yes, days, out).await?,
+        Command::PluginList => {
+            let tokens: Vec<okytes_daemon_api::contract::TokenInfo> = client
+                .request(Method::GET, "v1/tokens", None::<&()>)
+                .await?;
+            let restricted: Vec<_> = tokens
+                .into_iter()
+                .filter(|t| t.permissions.is_some() && !t.revoked)
+                .collect();
+            print(restricted, args.json)?;
+        }
+        Command::PluginRevoke { id } => {
+            let revoked: bool = client
+                .request(Method::DELETE, &format!("v1/tokens/{id}"), None::<&()>)
+                .await?;
+            print(revoked, args.json)?;
+        }
         Command::PeerIdentity => {
             let value: okytes_daemon_api::contract::PeerIdentity = client
                 .request(Method::GET, "v1/peers/identity", None::<&()>)
@@ -606,6 +893,7 @@ async fn remote_execute(args: Args, client: okytes_daemon_api::Client) -> Result
                 print(remote_wait(&client, id).await?, args.json)?;
             }
         }
+        Command::Watch { interval, active } => watch(&client, interval, active).await?,
         Command::List { offset } => {
             let records: Vec<okytes_core::types::JobRecord> = client
                 .request(

@@ -1,0 +1,37 @@
+# Headless Okytes server. Pick ONE mode and see apps/daemon/SERVER.md.
+services:
+  # Mode A: the daemon terminates TLS itself (certificate files on the host).
+  okytes:
+    build: .
+    image: okytes-daemon:0.0.2
+    restart: unless-stopped
+    stop_grace_period: 90s
+    command:
+      - --remote
+      - --bind=0.0.0.0:17841
+      - --cert=/certs/fullchain.pem
+      - --key=/certs/privkey.pem
+      - --host=downloads.example.com:17841
+    ports:
+      - "17841:17841"
+    volumes:
+      - okytes-data:/data
+      - /srv/downloads:/downloads
+      - /etc/okytes/certs:/certs:ro
+
+  # Mode B: loopback daemon behind a reverse proxy on the same host
+  # (Caddy/nginx terminate TLS). Enable with: docker compose --profile proxy up -d okytes-local
+  okytes-local:
+    profiles: ["proxy"]
+    build: .
+    image: okytes-daemon:0.0.2
+    restart: unless-stopped
+    stop_grace_period: 90s
+    network_mode: host
+    command: ["--bind", "127.0.0.1:17841"]
+    volumes:
+      - okytes-data:/data
+      - /srv/downloads:/downloads
+
+volumes:
+  okytes-data:

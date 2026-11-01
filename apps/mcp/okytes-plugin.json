@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "id": "org.okytes.mcp",
+  "name": "Okytes MCP server",
+  "version": "0.0.2",
+  "description": "Lets a local AI assistant list, add, pause, resume and cancel downloads.",
+  "permissions": ["jobs:read", "jobs:add", "jobs:control"]
+}

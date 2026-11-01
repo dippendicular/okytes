@@ -86,7 +86,13 @@ review. Link/file context-menu capture falls back to a browser download if Okyte
 is unavailable. Page collection through its context-menu action sends a bounded
 batch; popup collection provides review before sending.
 
-Configure automatic capture through Settings. Deny domains take precedence over
+Automatic capture is off by default. Turn it on from the popup switch or
+Settings. The toolbar badge shows ✓ when Okytes accepts a download and ! with a
+reason in its tooltip when it does not (the browser then keeps the download).
+Diagnostics in the extension's service-worker console name only the host, never
+the full URL.
+
+Configure automatic capture rules through Settings. Deny domains take precedence over
 allow domains; domain matching includes proper subdomains, not substring matches.
 Type rules use filename extensions. Unknown sizes bypass size-constrained rules.
 All automatic capture skips private browsing and extension-created downloads.
@@ -105,6 +111,37 @@ does not reinterpret arbitrary files as media.
 Required permissions cover native messaging, downloads, menus, rule storage and
 user-selected tab scripting. Cookies and request observation require optional
 site access; there is no required blanket host grant.
+
+## Supported browsers
+
+| Browser | Status |
+|---|---|
+| Chrome, Edge and other Chromium browsers (120+) | Supported. Brave, Opera and Vivaldi may need the host manifest copied to their own native-messaging folder. |
+| Firefox 128+ | Supported (temporary or self-signed installation). |
+| Safari | Not supported in 0.0.2. |
+
+Automatic capture uses the browser's downloads API. It cannot see downloads the
+browser does not start (for example, streams played in a page), private-window
+downloads, `blob:` or `data:` links, or downloads started by other extensions.
+For those, use the right-click menu, the popup or Okytes' own **Add downloads**.
+
+## Troubleshooting
+
+The toolbar badge shows ✓ when Okytes accepts a download and ! when it does
+not; hover over the icon for the reason. Browser downloads always continue if
+Okytes cannot take them.
+
+| Message | What to do |
+|---|---|
+| Okytes browser host is not installed | Launch the Okytes desktop app once; it registers the host. |
+| The Okytes browser host closed the connection | Start Okytes. If it persists, this extension's ID is not registered (see Native-host registration). |
+| Okytes is not running | Open the desktop app. |
+| Okytes could not create this download | Check the default download folder in Okytes Settings. |
+| Okytes did not answer in time | The browser keeps the download. The extension retries once with the same request ID, so Okytes never creates a duplicate. |
+
+Links that need a website sign-in work best with **Allow this site** enabled,
+which hands that site's cookies to Okytes for one job. If a signed link later
+expires during the download, use **Refresh link** in Okytes.
 
 ## Verification limits
 

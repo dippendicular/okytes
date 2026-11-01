@@ -3,7 +3,10 @@
 //! for worker quiescence before mutation; snapshots never report speculative bytes.
 use okytes_core::store::JobStore;
 use okytes_core::{
-    desktop::{Action, AddInput, DesktopService, Job, Reply, Segment, Settings, Snapshot},
+    desktop::{
+        Action, AddInput, Connection, DesktopService, Job, Reply, Segment, Settings, Snapshot,
+        Telemetry,
+    },
     engine::Engine,
     error::{EngineError, EngineResult},
     service::{DownloadService, EngineEvent},
@@ -244,6 +247,8 @@ impl Session {
                 shortcut_add: "Shift+N".into(),
                 shortcut_search: "Shift+F".into(),
                 shortcut_help: "Shift+?".into(),
+                details_on_start: None,
+                completion: None,
             },
         };
         validate_settings(&settings)?;
@@ -386,6 +391,46 @@ impl Session {
                 })
                 .collect(),
         })
+    }
+
+    /// Persist settings and apply traffic policy while the caller holds the queue lock.
+    async fn apply_settings(&self, queue: &mut Queue, settings: Settings) -> EngineResult<()> {
+        let mut config = self.store.config().await?;
+        config.traffic = settings.traffic.clone();
+        self.store
+            .set_preferences(vec![
+                (
+                    "desktop-v1".into(),
+                    serde_json::to_string(&settings).map_err(|e| invalid(e.to_string()))?,
+                ),
+                (
+                    "engine".into(),
+                    serde_json::to_string(&config).map_err(|e| invalid(e.to_string()))?,
+                ),
+            ])
+            .await?;
+        self.engine.set_traffic(settings.traffic.clone())?;
+        self.torrent.set_traffic(&settings.traffic)?;
+        queue.settings = settings;
+        Ok(())
+    }
+
+    /// Drop a removed job's speed limit and completion choice so the bounded
+    /// lists (128 entries each) do not fill with entries for deleted jobs.
+    async fn forget_preferences(&self, id: &str, queue: &mut Queue) -> EngineResult<()> {
+        let mut settings = queue.settings.clone();
+        let limits = settings.traffic.job_limits.len();
+        settings.traffic.job_limits.retain(|limit| limit.id != id);
+        let actions = settings.completion.as_ref().map_or(0, Vec::len);
+        if let Some(completion) = settings.completion.as_mut() {
+            completion.retain(|action| action.id != id);
+        }
+        if settings.traffic.job_limits.len() == limits
+            && settings.completion.as_ref().map_or(0, Vec::len) == actions
+        {
+            return Ok(());
+        }
+        self.apply_settings(queue, settings).await
     }
 
     async fn stop(&self, job: &JobRecord, queue: &mut Queue, cancel: bool) -> EngineResult<()> {
@@ -538,6 +583,19 @@ fn validate_settings(settings: &Settings) -> EngineResult<()> {
         .all(|value| value.starts_with("Shift+") && value.len() <= 32)
         || settings.destination.len() > 4096
         || !Path::new(&settings.destination).is_absolute()
+        || settings.completion.as_ref().is_some_and(|actions| {
+            let mut ids = std::collections::HashSet::new();
+            actions.len() > 128
+                || actions
+                    .iter()
+                    .any(|a| {
+                        Uuid::parse_str(&a.id).is_err()
+                            || !ids.insert(&a.id)
+                            || a.upload.as_deref().is_some_and(|p| {
+                                !matches!(p, "gdrive" | "dropbox" | "onedrive")
+                            })
+                    })
+        })
     {
         return Err(invalid("settings require version 1, an absolute destination, 1–32 downloads and light/dark/system theme"));
     }
@@ -569,6 +627,28 @@ impl DesktopService for Session {
                 .inspect(&url)
                 .await
                 .map_err(|e| invalid(e.to_string()))
+        })
+    }
+    fn expand_playlist(&self, url: String) -> Reply<'_, Vec<String>> {
+        Box::pin(async move { okytes_core::playlist::expand(&*self.media, &url).await })
+    }
+    fn crawl(
+        &self,
+        input: okytes_core::desktop::CrawlInput,
+    ) -> Reply<'_, okytes_core::desktop::CrawlResult> {
+        Box::pin(async move { okytes_core::crawl::crawl(&*self.media, input).await })
+    }
+    fn inspect_zip(&self, url: String) -> Reply<'_, okytes_core::desktop::ZipListing> {
+        Box::pin(async move {
+            let parsed = url::Url::parse(&url).map_err(|_| invalid("invalid URL"))?;
+            if url.len() > 8192
+                || !matches!(parsed.scheme(), "http" | "https")
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+            {
+                return Err(invalid("ZIP preview needs an HTTP(S) URL without credentials"));
+            }
+            okytes_core::archive::zip_listing(&*self.media, &parsed).await
         })
     }
     fn submit(&self, input: okytes_core::desktop::Submit) -> Reply<'_, String> {
@@ -784,6 +864,46 @@ impl DesktopService for Session {
                 .await
         })
     }
+    fn telemetry(&self, value: String) -> Reply<'_, Telemetry> {
+        Box::pin(async move {
+            let id = id(&value)?;
+            let record = self
+                .store
+                .load_job(id)
+                .await?
+                .ok_or(EngineError::JobNotFound(id))?;
+            let last_modified = record.remote_identity.last_modified.clone();
+            let hash_expected = record.expected_hash.is_some();
+            let verified = record.verified_sha256.is_some();
+            let job = self.render(record, &mut *self.queue.lock().await).await?;
+            // Sampled after rendering so durable bytes and live requests are close in time.
+            let (links, stats) = self.engine.telemetry(id);
+            Ok(Telemetry {
+                average_speed: stats.average_speed(job.bytes as u64),
+                peak_speed: (stats.peak_speed > 0.0).then_some(stats.peak_speed),
+                range_support: stats.range_support,
+                concurrency_limit: stats.concurrency_limit,
+                last_modified,
+                hash_expected,
+                verified_bytes: if verified { job.bytes } else { 0.0 },
+                connections: links
+                    .into_iter()
+                    .map(|link| Connection {
+                        id: link.id,
+                        segment_start: link.segment_start as f64,
+                        start: link.start as f64,
+                        end: link.end.map(|end| end as f64),
+                        bytes: link.received as f64,
+                        speed: link.speed,
+                        retries: link.attempt,
+                        state: link.state.into(),
+                        age_ms: link.age.as_secs_f64() * 1000.0,
+                    })
+                    .collect(),
+                job,
+            })
+        })
+    }
     fn control(&self, value: String, action: Action) -> Reply<'_, ()> {
         Box::pin(async move {
             let id = id(&value)?;
@@ -839,6 +959,7 @@ impl DesktopService for Session {
                     self.stop(&job, &mut queue, true).await?;
                     self.store.delete_job(id).await?;
                     queue.samples.remove(&id);
+                    self.forget_preferences(&id.to_string(), &mut queue).await?;
                 }
                 Action::RemoveFiles => {
                     self.stop(&job, &mut queue, true).await?;
@@ -869,6 +990,7 @@ impl DesktopService for Session {
                     }
                     self.store.delete_job(id).await?;
                     queue.samples.remove(&id);
+                    self.forget_preferences(&id.to_string(), &mut queue).await?;
                 }
                 Action::Priority(priority) => {
                     if !(-100..=100).contains(&priority)
@@ -881,6 +1003,16 @@ impl DesktopService for Session {
                     }
                     job.priority = priority;
                     self.store.save_job(&job).await?;
+                }
+                Action::Refresh(link) => {
+                    if queue.tasks.contains_key(&id) {
+                        return Err(invalid("pause the download before replacing its link"));
+                    }
+                    if link.len() > 8192 {
+                        return Err(invalid("link exceeds 8192 bytes"));
+                    }
+                    let url = url::Url::parse(link.trim()).map_err(|_| invalid("invalid link"))?;
+                    self.engine.refresh_source(id, url).await?;
                 }
                 Action::Rename(name) => {
                     if queue.tasks.contains_key(&id)
@@ -922,24 +1054,7 @@ impl DesktopService for Session {
                 .await
                 .map_err(|e| invalid(format!("cannot create destination: {e}")))?;
             let mut queue = self.queue.lock().await;
-            let mut config = self.store.config().await?;
-            config.traffic = settings.traffic.clone();
-            self.store
-                .set_preferences(vec![
-                    (
-                        "desktop-v1".into(),
-                        serde_json::to_string(&settings).map_err(|e| invalid(e.to_string()))?,
-                    ),
-                    (
-                        "engine".into(),
-                        serde_json::to_string(&config).map_err(|e| invalid(e.to_string()))?,
-                    ),
-                ])
-                .await?;
-            self.engine.set_traffic(settings.traffic.clone())?;
-            self.torrent.set_traffic(&settings.traffic)?;
-            queue.settings = settings;
-            Ok(())
+            self.apply_settings(&mut queue, settings).await
         })
     }
     fn subscribe(&self) -> Reply<'_, tokio::sync::broadcast::Receiver<EngineEvent>> {

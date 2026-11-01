@@ -12,8 +12,8 @@ categories = ["api-bindings", "network-programming"]
 
 [dependencies]
 okytes-core.workspace = true
-okytes-daemon-api = { version = "=0.1.0", path = "../daemon-api" }
-okytes-desktop-service = { version = "=0.1.0", path = "../../apps/desktop/service" }
+okytes-daemon-api = { version = "=0.0.2", path = "../daemon-api" }
+okytes-desktop-service = { version = "=0.0.2", path = "../../apps/desktop/service" }
 okytes-torrent-types.workspace = true
 tokio.workspace = true
 uuid.workspace = true

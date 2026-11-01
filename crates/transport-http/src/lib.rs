@@ -227,6 +227,49 @@ fn status(response: &Response) -> Result<(), TransportError> {
     }
 }
 
+/// File types a server should never answer with a web page.
+const FILE_TYPES: &[&str] = &[
+    "7z", "aac", "apk", "appimage", "avi", "bin", "bz2", "cab", "deb", "dmg", "docx", "epub",
+    "exe", "flac", "flv", "gz", "img", "iso", "jar", "jpeg", "jpg", "m4a", "m4v", "mkv", "mov",
+    "mp3", "mp4", "msi", "msix", "ogg", "opus", "pdf", "pkg", "png", "pptx", "rar", "rpm", "tar",
+    "tgz", "torrent", "wav", "webm", "webp", "wmv", "xlsx", "xz", "zip", "zst",
+];
+
+/// Reject an HTML page served in place of a named file: typically a login,
+/// expired-link or error page answered with 200 OK. Conservative by design:
+/// only when the URL clearly names a binary type and the server does not
+/// itself declare an attachment, so genuine page downloads keep working.
+fn html_instead_of_file(response: &Response, requested: &Url) -> Result<(), TransportError> {
+    let html = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.split(';').next().unwrap_or_default().trim().to_ascii_lowercase())
+        .is_some_and(|t| t == "text/html" || t == "application/xhtml+xml");
+    if !html {
+        return Ok(());
+    }
+    let attachment = response
+        .headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("attachment"));
+    let names_file = |url: &Url| {
+        url.path_segments()
+            .and_then(|mut s| s.next_back())
+            .and_then(|name| name.rsplit_once('.'))
+            .is_some_and(|(_, ext)| FILE_TYPES.contains(&ext.to_ascii_lowercase().as_str()))
+    };
+    if !attachment && (names_file(requested) || names_file(response.url())) {
+        return Err(TransportError::UnexpectedStatus {
+            url: Box::new(response.url().clone()),
+            status: response.status().as_u16(),
+            detail: "the server sent a web page instead of the file; the link may have expired or need a browser sign-in".into(),
+        });
+    }
+    Ok(())
+}
+
 fn parse_range(value: &str) -> Option<ContentRange> {
     let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
     let (start, end) = range.split_once('-')?;
@@ -257,6 +300,7 @@ impl Transport for HttpTransport {
                 (response, permit) = self.send(Method::GET, &url, &headers, None, None).await?;
             }
             status(&response)?;
+            html_instead_of_file(&response, &url)?;
             let total = text_header(response.headers(), "content-length", response.url())?
                 .map(|s| {
                     s.parse::<u64>()
@@ -307,6 +351,7 @@ impl Transport for HttpTransport {
                 .send(Method::GET, &url, &headers, range, Some(&expected))
                 .await?;
             status(&response)?;
+            html_instead_of_file(&response, &url)?;
             let code = response.status().as_u16();
             let content_length = response.content_length();
             let content_range = if code == 206 {

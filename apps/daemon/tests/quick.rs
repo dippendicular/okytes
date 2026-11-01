@@ -144,6 +144,8 @@ async fn local_assets_pairing_scopes_origin_host_csrf_and_logout_fail_closed() {
         .issue(IssueToken {
             scope: Scope::Control,
             lifetime_secs: 60,
+            permissions: None,
+            label: None,
         })
         .await
         .unwrap();

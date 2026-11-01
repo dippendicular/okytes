@@ -52,3 +52,13 @@ button {
   width: 180px;
   height: auto;
 }
+label.toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  opacity: 0.8;
+}

@@ -29,6 +29,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     sync::{broadcast, Semaphore},
 };
+use url::Url;
 use uuid::Uuid;
 type ServiceFuture<'a, T> = Pin<Box<dyn Future<Output = EngineResult<T>> + Send + 'a>>;
 
@@ -47,12 +48,14 @@ pub struct Engine {
     sessions: Mutex<HashMap<JobId, Vec<(String, String)>>>,
     traffic: Arc<crate::traffic::TrafficController>,
     fair: Arc<crate::fairness::FairGate>,
+    telemetry: crate::telemetry::Telemetry,
 }
 struct Active<'a> {
     ids: &'a Mutex<HashSet<JobId>>,
     id: JobId,
     full_progress: &'a Mutex<HashMap<JobId, u64>>,
     traffic: &'a crate::traffic::TrafficController,
+    telemetry: &'a crate::telemetry::Telemetry,
 }
 struct Worker<'a> {
     counts: &'a Mutex<HashMap<JobId, u32>>,
@@ -73,6 +76,7 @@ impl Drop for Worker<'_> {
 impl Drop for Active<'_> {
     fn drop(&mut self) {
         self.traffic.release(self.id);
+        self.telemetry.stopped(self.id);
         if let Ok(mut ids) = self.ids.lock() {
             ids.remove(&self.id);
         }
@@ -117,6 +121,7 @@ impl Engine {
             full_progress: Mutex::new(HashMap::new()),
             workers: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            telemetry: Default::default(),
         })
     }
     /// Apply persisted payload preferences without replacing running workers.
@@ -139,6 +144,71 @@ impl Engine {
     /// authenticated queue owner may call this after checking existing records.
     pub async fn add_captured(&self, request: DownloadRequest, id: JobId) -> EngineResult<JobId> {
         self.add_request(request, Some(id)).await
+    }
+    /// Replace an expired or broken source link on a stopped job, keeping its
+    /// durable progress. With partial data the new link must identify the same
+    /// remote file; the normal resume checks then still run on every request.
+    pub async fn refresh_source(&self, id: JobId, url: Url) -> EngineResult<()> {
+        let mut job = self.status(id).await?;
+        if job.protocol != "http" || !matches!(url.scheme(), "http" | "https") {
+            return Err(EngineError::Config(
+                "link refresh supports HTTP(S) downloads only".into(),
+            ));
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(EngineError::Config(
+                "use a link without an embedded username or password".into(),
+            ));
+        }
+        if !matches!(job.state, JobState::Paused | JobState::Failed)
+            || self.active.lock().map(|a| a.contains(&id)).unwrap_or(true)
+        {
+            return Err(EngineError::Config(
+                "pause the download before replacing its link".into(),
+            ));
+        }
+        // Session cookies were captured for the original site; never send
+        // them to a different origin.
+        let same_origin = job.url.origin() == url.origin();
+        let headers = if same_origin {
+            self.session_headers(&job).unwrap_or_default()
+        } else {
+            vec![]
+        };
+        let probe = self
+            .transport
+            .probe(&url, &headers)
+            .await
+            .map_err(|source| EngineError::Transport {
+                job_id: id,
+                source: Box::new(source),
+            })?;
+        let durable: u64 = self
+            .store
+            .load_segments(id)
+            .await?
+            .iter()
+            .map(|s| s.bytes_downloaded)
+            .sum();
+        if durable > 0 {
+            let identified = job.remote_identity.strong_etag().is_some()
+                || (job.remote_identity.last_modified.is_some()
+                    && job.remote_identity.content_length.is_some());
+            if !identified || !job.remote_identity.is_compatible(&probe.remote_identity) {
+                return Err(EngineError::IdentityMismatch {
+                    job_id: id,
+                    detail: "the new link serves a different file (size, ETag or date differ); use Download again to start over".into(),
+                });
+            }
+        }
+        if !same_origin {
+            job.requires_session = false;
+            self.forget_session(id);
+        }
+        job.url = url;
+        job.error_message = None;
+        job.updated_at = Utc::now();
+        self.store.save_job(&job).await
     }
     /// Drop memory-only credentials after cancellation, removal or completion.
     pub fn forget_session(&self, id: JobId) {
@@ -325,6 +395,16 @@ impl Engine {
     pub fn live_full_bytes(&self, id: JobId) -> Option<u64> {
         self.full_progress.lock().ok()?.get(&id).copied()
     }
+    /// Sample display-only connection activity and session statistics.
+    pub fn telemetry(
+        &self,
+        id: JobId,
+    ) -> (
+        Vec<crate::telemetry::LinkSnapshot>,
+        crate::telemetry::JobStats,
+    ) {
+        self.telemetry.snapshot(id)
+    }
     /// Live transfer tasks, including admission waits and retry backoff, excluding
     /// probing and verification. Persisted segment states are not worker counts.
     pub fn active_workers(&self, id: JobId) -> u32 {
@@ -402,6 +482,7 @@ impl Engine {
             id,
             full_progress: &self.full_progress,
             traffic: &self.traffic,
+            telemetry: &self.telemetry,
         };
         let state = self.status(id).await?.state;
         if state == JobState::Cancelled {
@@ -565,6 +646,11 @@ impl Engine {
         job.total_size = probe.content_length;
         self.store.save_job(&job).await?;
         job = self.transition(id, JobState::Downloading).await?;
+        self.telemetry.started(
+            id,
+            probe.accepts_ranges && job.total_size.is_some(),
+            durable,
+        );
         if !probe.accepts_ranges || job.total_size.is_none() {
             if durable > 0 {
                 return Err(EngineError::IdentityMismatch {
@@ -666,6 +752,11 @@ impl Engine {
             let mut sampled = 0;
             let mut window = Instant::now();
             let mut first_error = None;
+            self.telemetry.observe(
+                id,
+                self.config.fixed_concurrency.unwrap_or(tuning.limit()),
+                0.0,
+            );
             while !pending.is_empty() || !workers.is_empty() {
                 let admission = self.config.fixed_concurrency.unwrap_or(tuning.limit());
                 while !self.queue_allowed()? && self.running(id).await? {
@@ -741,6 +832,7 @@ impl Engine {
                     if window.elapsed() >= Duration::from_millis(250) {
                         ewma.record(sampled, window.elapsed());
                         tuning.observe(ewma.value());
+                        self.telemetry.observe(id, admission, ewma.value());
                         sampled = 0;
                         window = Instant::now();
                         let _ = self.events.send(EngineEvent::Progress(DownloadProgress {
@@ -780,9 +872,15 @@ impl Engine {
                 .current_offset()
                 .saturating_add(self.config.max_segment_size.max(1) - 1),
         );
+        let link = self
+            .telemetry
+            .open(job.id, segment.start, segment.current_offset(), Some(end));
         for attempt in 0..=self.config.max_retries {
             if !self.running(job.id).await? {
                 return Ok((segment, 0, 0, 0.0));
+            }
+            if attempt > 0 {
+                link.set_state(crate::telemetry::LinkState::Connecting);
             }
             let Some(permit) = self
                 .controlled(
@@ -819,7 +917,8 @@ impl Engine {
                         segment.state = segment.state.transition(SegmentState::Pending, job.id)?;
                     }
                     segment.state = segment.state.transition(SegmentState::Active, job.id)?;
-                    self.stream(job, &mut segment, response.body, Some(end + 1), true)
+                    link.set_state(crate::telemetry::LinkState::Downloading);
+                    self.stream(job, &mut segment, response.body, Some(end + 1), true, &link)
                         .await
                 }
                 Err(source) => Err(EngineError::Transport {
@@ -841,6 +940,7 @@ impl Engine {
                     if retryable(&source) && attempt < self.config.max_retries =>
                 {
                     tracing::warn!(job_id=%job.id,attempt,"retrying segment");
+                    link.retrying(attempt + 1);
                     self.delay(job.id, attempt, &source).await?;
                 }
                 Err(error) => return Err(error),
@@ -855,6 +955,7 @@ impl Engine {
         mut body: crate::transport::ByteStream,
         end: Option<u64>,
         checkpoint: bool,
+        link: &crate::telemetry::LinkGuard<'_>,
     ) -> EngineResult<()> {
         let buffer_limit = self.config.write_buffer_size.min(256 * 1024);
         let mut pending = Vec::with_capacity(buffer_limit);
@@ -900,6 +1001,7 @@ impl Engine {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 };
                 pending.extend_from_slice(&incoming[..take]);
+                link.received(take);
                 incoming = &incoming[take..];
                 if pending.len() == buffer_limit {
                     self.durable_checkpoint(&job.partial_path, segment, &pending, checkpoint)
@@ -968,6 +1070,12 @@ impl Engine {
         }
         remove_partial(&job.partial_path).await?;
         drop(self.files.create(&job.partial_path).await?);
+        let link = self.telemetry.open(
+            job.id,
+            0,
+            0,
+            job.total_size.map(|size| size.saturating_sub(1)),
+        );
         let response_started = Instant::now();
         let Some(response) = self
             .controlled(
@@ -984,6 +1092,7 @@ impl Engine {
             source: Box::new(source),
         })?;
         self.response_received(job.id, response.status, response_started);
+        link.set_state(crate::telemetry::LinkState::Downloading);
         let mut segment = SegmentRecord {
             id: Uuid::new_v4(),
             job_id: job.id,
@@ -993,8 +1102,15 @@ impl Engine {
             state: SegmentState::Active,
             last_checkpoint: Utc::now(),
         };
-        self.stream(job, &mut segment, response.body, job.total_size, false)
-            .await
+        self.stream(
+            job,
+            &mut segment,
+            response.body,
+            job.total_size,
+            false,
+            &link,
+        )
+        .await
     }
     async fn finalize(&self, id: JobId) -> EngineResult<()> {
         let mut job = self.transition(id, JobState::Verifying).await?;
