@@ -18,13 +18,13 @@ jobs:
   browser-extension:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.11.0
       - name: Build and check browser extension
@@ -40,7 +40,7 @@ jobs:
           cp extensions/INSTALLATION.md artifacts/BROWSER-INSTALLATION.md
           (cd extensions/dist/chromium && zip -r ../../../artifacts/Okytes-Chrome-extension.zip .)
           node -e 'const fs = require("node:fs"); fs.writeFileSync("artifacts/artifacts-browser.json", JSON.stringify([{name:"Okytes-Chrome-extension.zip",target:"Chrome / Chromium",signing:"unsigned unpacked extension",installation:"unverified; manual Load unpacked and native-host registration required"}]));'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: candidate-browser
           path: artifacts/
@@ -48,18 +48,18 @@ jobs:
   sdk-packages:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@1.120.0
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.11.0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: node dev-tools/scripts/prepare-vendor.mjs
@@ -76,7 +76,7 @@ jobs:
           python -m twine check sdk-artifacts/*
           cargo package -p okytes-sdk --locked --no-verify
           cp target/package/okytes-sdk-*.crate sdk-artifacts/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-packages
           path: sdk-artifacts/*
@@ -87,11 +87,11 @@ jobs:
     runs-on: ubuntu-22.04
     environment: sdk-release
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sdk-packages
           path: sdk-artifacts
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -144,17 +144,17 @@ jobs:
       UPDATE_SIGNING_ENABLED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
       MACOS_SIGNING_ENABLED: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.120.0
         with:
           targets: ${{ matrix.target }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.11.0
       - name: Validate release version
@@ -286,7 +286,7 @@ jobs:
           cargo metadata --locked --format-version 1 > cargo-metadata.json
           node packaging/sbom.mjs cargo-metadata.json "artifacts/sbom-$TARGET.cdx.json"
           cp apps/desktop/src-tauri/third-party-notices/frontend.cdx.json "artifacts/frontend-sbom-$TARGET.cdx.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: candidate-${{ matrix.target }}
           path: artifacts/
@@ -300,16 +300,16 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.11.0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: candidate-*
           merge-multiple: true
@@ -323,7 +323,7 @@ jobs:
         run: |
           node packaging/release.mjs artifacts "$RELEASE_TAG"
           node packaging/sign-release.mjs artifacts "$RELEASE_TAG" "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-dry-run
           path: artifacts/
