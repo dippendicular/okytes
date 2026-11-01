@@ -39,7 +39,7 @@
     "pack:check": "pnpm pack --dry-run"
   },
   "dependencies": {
-    "openapi-fetch": "^0.14.0"
+    "openapi-fetch": "^0.17.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
