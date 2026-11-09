@@ -16,6 +16,6 @@
     "typescript-eslint": "^8.72.1",
     "eslint": "^9.0.0",
     "esbuild": "^0.28.2",
-    "vitest": "^3.0.0"
+    "vitest": "^5.1.0"
   }
 }
