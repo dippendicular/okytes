@@ -3,6 +3,7 @@ import { defaults, normalizeRules, validUrl, type Rules } from "./rules";
 import {
   BridgeError,
   describe,
+  forget,
   handoff,
   handoffTorrent,
   handoffTorrentUrl,
@@ -103,7 +104,7 @@ async function automatic(item: DownloadItem): Promise<void> {
   if (item.byExtensionId || inflight.has(url)) return;
   if ((accepted.get(url) ?? 0) > Date.now()) {
     // Okytes already owns this URL from an explicit capture moments ago.
-    await api.downloads.cancel(item.id).catch(() => {});
+    await forget(api, item.id);
     return;
   }
   const value = await rules();
@@ -120,7 +121,7 @@ async function automatic(item: DownloadItem): Promise<void> {
       }
       remember(url);
       feedback(null, "torrent");
-      await api.downloads.cancel(item.id).catch(() => {});
+      await forget(api, item.id);
     } catch (error) {
       feedback(error instanceof BridgeError ? error.code : "host_exited", "torrent");
     } finally {

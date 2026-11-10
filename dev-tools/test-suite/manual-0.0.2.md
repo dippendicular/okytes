@@ -82,6 +82,9 @@ reports two `result_large_err` errors in code that 0.0.2 did not change.
 - [ ] Right-click "Download with Okytes" on a link; on failure the browser downloads it.
 - [ ] Chrome with a type rule (e.g. `zip`) captures a link without an extension that resolves to a `.zip`.
 - [ ] Firefox: menus appear after a browser restart.
+- [ ] A download that starts from a form post or needs the page's sign-in stays in the browser; the badge explains why (`source_unavailable`).
+- [ ] After a successful capture the browser's download list has no cancelled entry.
+- [ ] `<a download="report.pdf" href="/export?id=5">` is saved as `report.pdf` (Firefox, or Chromium with a type rule).
 
 ## 9. Upgrade
 
@@ -92,6 +95,16 @@ reports two `result_large_err` errors in code that 0.0.2 did not change.
 - [ ] Configure a recurring queue window in Settings using the intended IANA
   timezone. A queued job starts when the window opens; an active job yields
   when it closes; a manually paused job stays paused when it reopens.
+- [ ] When a window closes during a transfer, connections are released within a
+  second and the download continues from the same bytes when it reopens.
+- [ ] `https://host/file[01-03].zip` in Add downloads creates three jobs.
+- [ ] Details → Start at: a running download pauses and resumes at the chosen
+  time; Clear start time removes it; it survives an app restart.
+- [ ] Settings → When downloads finish: Quit, Sleep and Shut down each show the
+  60-second notice after the last download; Cancel stops it.
+- [ ] Settings → Extract archives: a finished `.zip`, `.7z` and `.tar.gz` each
+  unpack into a new folder; a second copy unpacks into `name (2)`.
+- [ ] A download to an exFAT drive completes and publishes.
 - [ ] Run the scheduler harness from an idle machine with a new output
   directory: `cargo run -p okytes-bench --release --locked -- run --runs 3 --mode both --output .tools/scheduler-benchmark`.
   Review `summary.json` and every raw result before making a performance claim.

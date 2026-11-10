@@ -22,6 +22,7 @@
 //! OS-specific crates. Platform code lives behind traits implemented outside core.
 
 pub mod archive;
+pub mod batch;
 pub mod crawl;
 pub mod desktop;
 pub mod engine;

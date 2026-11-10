@@ -274,6 +274,64 @@ fn html_instead_of_file(response: &Response, requested: &Url) -> Result<(), Tran
     Ok(())
 }
 
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            decoded.push(u8::from_str_radix(value.get(at + 1..at + 3)?, 16).ok()?);
+            at += 3;
+        } else {
+            decoded.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+/// The filename a `Content-Disposition` header suggests. The RFC 5987
+/// `filename*` form (UTF-8, percent-encoded) wins over plain `filename`, as in
+/// browsers, so non-ASCII names survive. The engine sanitizes the result.
+fn disposition_filename(header: &str) -> Option<String> {
+    let mut plain = None;
+    let mut rest = header;
+    while !rest.is_empty() {
+        // Parameters end at ';', which may also appear inside a quoted value.
+        let mut quoted = false;
+        let end = rest
+            .char_indices()
+            .find(|(_, c)| {
+                quoted ^= *c == '"';
+                *c == ';' && !quoted
+            })
+            .map_or(rest.len(), |(at, _)| at);
+        let part = &rest[..end];
+        rest = rest.get(end + 1..).unwrap_or_default();
+        let Some((name, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        if name.trim().eq_ignore_ascii_case("filename*") {
+            let mut fields = value.splitn(3, '\'');
+            if let (Some(charset), Some(_language), Some(encoded)) =
+                (fields.next(), fields.next(), fields.next())
+            {
+                if charset.eq_ignore_ascii_case("utf-8") {
+                    if let Some(name) = percent_decode(encoded).filter(|name| !name.is_empty()) {
+                        return Some(name);
+                    }
+                }
+            }
+        } else if name.trim().eq_ignore_ascii_case("filename") {
+            let value = value.trim_matches('"').replace("\\\"", "\"");
+            // Some servers percent-encode the plain form too.
+            plain = Some(percent_decode(&value).unwrap_or(value));
+        }
+    }
+    plain.filter(|name| !name.is_empty())
+}
+
 fn parse_range(value: &str) -> Option<ContentRange> {
     let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
     let (start, end) = range.split_once('-')?;
@@ -328,12 +386,7 @@ impl Transport for HttpTransport {
                     "content-disposition",
                     response.url(),
                 )?
-                .and_then(|s| {
-                    s.split(';')
-                        .filter_map(|part| part.trim().split_once('='))
-                        .find(|(name, _)| name.eq_ignore_ascii_case("filename"))
-                        .map(|(_, value)| value.trim().trim_matches('"').to_owned())
-                }),
+                .and_then(|s| disposition_filename(&s)),
                 content_type: text_header(response.headers(), "content-type", response.url())?,
             };
             drop(permit);

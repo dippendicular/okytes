@@ -17,6 +17,8 @@ const reasons: Record<string, string> = {
   app_unavailable: "Okytes is not running. Open the Okytes desktop app.",
   capture_rejected:
     "Okytes could not create this download. Check the destination folder in Okytes.",
+  source_unavailable:
+    "Okytes cannot fetch this link by itself (it may need this page's sign-in or form); the browser download continues.",
   rate_limited: "Too many requests. Wait a minute and try again.",
   invalid_request: "Okytes rejected the request from this extension version.",
   invalid_url: "Only HTTP and HTTPS links without embedded credentials are supported.",
@@ -177,6 +179,43 @@ export async function handoffTorrentUrl(
   });
 }
 
+// The browser's name matters when the link itself has none, such as
+// `<a download="report.pdf" href="/export?id=5">`. Links that end in a named
+// file keep the server's own suggestion.
+export function browserName(item: DownloadItem, url: string): string | null {
+  const name = item.filename.split(/[\\/]/).pop() ?? "";
+  let last = "";
+  try {
+    last = new URL(url).pathname.split("/").pop() ?? "";
+  } catch {
+    return null;
+  }
+  // Mirrors the desktop's checks: a bounded basename without control characters.
+  const printable = [...name].every(
+    (c) => c >= " " && (c < "\x7f" || c > "\x9f"),
+  );
+  return !last.includes(".") &&
+    printable &&
+    /^[^\\/]+\.[A-Za-z0-9]{1,10}$/.test(name) &&
+    new TextEncoder().encode(name).length <= 200
+    ? name
+    : null;
+}
+// Remove the cancelled entry from the browser's list; Okytes shows the
+// download from here on. Never affects the outcome of a capture.
+export async function forget(api: Browser, id: number): Promise<void> {
+  try {
+    await api.downloads.cancel(id);
+  } catch {
+    // Already finished in the browser; Okytes still owns its own copy.
+    return;
+  }
+  try {
+    await api.downloads.erase?.({ id });
+  } catch {
+    // The entry stays visible as cancelled.
+  }
+}
 // Do not pause first: a killed extension/worker must leave the original browser
 // transfer able to finish. Cancel only after the app's durable acknowledgement.
 export async function intercept(
@@ -203,7 +242,7 @@ export async function intercept(
   try {
     const response = await handoff(api, {
       url,
-      filename: null,
+      filename: browserName(item, url),
       sha256: null,
       headers: await headers(url),
     });
@@ -212,9 +251,7 @@ export async function intercept(
       return false;
     }
     report?.(null);
-    await api.downloads.cancel(item.id).catch(() => {
-      // Already finished in the browser; Okytes still owns its own copy.
-    });
+    await forget(api, item.id);
     return true;
   } catch (error) {
     report?.(error instanceof BridgeError ? error.code : "host_exited");

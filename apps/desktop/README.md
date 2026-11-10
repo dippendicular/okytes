@@ -68,6 +68,26 @@ modification date) and keeps every completed segment. A different file is
 refused; use **Download again** instead. Browser session cookies are dropped
 when the new link is on a different site.
 
+### Batch patterns, start times and finish actions
+
+- **Batch pattern.** In **Add downloads**, a link such as
+  `https://example.com/file[001-100].zip` adds the whole series. `[1-20]`,
+  zero-padded `[001-100]`, stepped `[0-100:10]` and `[a-f]` work, up to 100
+  links per import.
+- **Start at.** Click a download's name to open its details, choose a date and
+  time and select **Schedule start**. The download stays paused until then.
+  Okytes must be running at that time, and it does not wake a sleeping
+  computer. A time that passed while Okytes was closed starts the download
+  when Okytes opens.
+- **When downloads finish** (Settings). Okytes can put the computer to sleep,
+  shut it down, or quit after every download has finished. The choice applies
+  once and is forgotten when Okytes closes. Okytes shows a notice for 60
+  seconds first; **Cancel** stops it. Paused and failed downloads do not count
+  as unfinished, and a download with a start time keeps the computer on.
+- **Extract archives** (Settings, off by default). A finished zip, 7z or tar
+  archive is unpacked into a new folder beside it with the system's `tar`
+  (`bsdtar` or `unzip` on Linux). Existing files are never overwritten.
+
 ### Website crawler
 
 **Crawl website** collects file links from a site:

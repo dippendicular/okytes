@@ -49,6 +49,7 @@ export interface Browser {
       [{ id: number; filename?: { current?: string }; state?: { current?: string } }]
     >;
     cancel(id: number): Promise<void>;
+    erase?(query: { id: number }): Promise<number[]>;
     download(input: { url: string }): Promise<number>;
   };
   tabs: {

@@ -4,6 +4,7 @@ use okytes_desktop_service::{AppService, Session};
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
+mod automation;
 mod cloud;
 mod merge;
 mod storage;
@@ -388,6 +389,55 @@ async fn set_settings(service: State<'_, Service>, settings: Settings) -> Result
 }
 
 #[tauri::command]
+fn automation_state(automation: State<'_, Arc<automation::Automation>>) -> automation::View {
+    automation.view()
+}
+#[tauri::command]
+fn set_when_done(
+    app: tauri::AppHandle,
+    automation: State<'_, Arc<automation::Automation>>,
+    action: Option<String>,
+) -> Result<(), String> {
+    automation.set_when_done(action)?;
+    // Also ends a countdown already shown in the window.
+    let _ = app.emit("when-done", None::<&str>);
+    Ok(())
+}
+#[tauri::command]
+fn set_extract(
+    automation: State<'_, Arc<automation::Automation>>,
+    enabled: bool,
+) -> Result<(), String> {
+    automation.set_extract(enabled)
+}
+/// Hold a download until a wall-clock time, or clear that with `at: null`.
+#[tauri::command]
+async fn schedule_start(
+    service: State<'_, Service>,
+    automation: State<'_, Arc<automation::Automation>>,
+    id: String,
+    at: Option<i64>,
+) -> Result<(), String> {
+    if at.is_none() {
+        return automation.schedule(id, None);
+    }
+    let job = service.get(id.clone()).await.map_err(|e| e.to_string())?;
+    let running = match job.state.as_str() {
+        "Queued" | "Probing" | "Downloading" => true,
+        "Paused" | "Failed" => false,
+        _ => return Err("Only an unfinished download can be scheduled".to_owned()),
+    };
+    automation.schedule(id.clone(), at)?;
+    if running {
+        if let Err(error) = service.control(id.clone(), Action::Pause).await {
+            let _ = automation.schedule(id, None);
+            return Err(error.to_string());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn inspect_torrent(
     service: State<'_, Service>,
     input: okytes_torrent_types::Input,
@@ -447,6 +497,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             inspect_torrent,
             add_torrent,
             torrent,
+            automation_state,
+            set_when_done,
+            set_extract,
+            schedule_start,
             peer_identity,
             peer_discover,
             peer_discovery_setting,
@@ -470,6 +524,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             app.manage(cloud.clone());
             app.manage(Arc::new(storage::Storage::new(&directory)));
             app.manage(Arc::new(merge::Merges::new(&directory)));
+            let automation = Arc::new(automation::Automation::new(&directory));
+            app.manage(automation.clone());
             // Re-run on every launch so upgrades and moved portable directories
             // repair the absolute native-host manifest path automatically.
             if let Err(error) = register_native_host() {
@@ -497,6 +553,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             session
             };
             app.manage(service.clone());
+            let starts = service.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    automation.start_due(starts.as_ref()).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                }
+            });
             let handle = app.handle().clone();
             let notifications = service.clone();
             tauri::async_runtime::spawn(async move {
@@ -532,6 +595,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     };
                                     let _ = events.notification().builder().title(title).body(body).show();
+                                });
+                            }
+                            if let Some((id, title)) = message {
+                                let automation = handle.state::<Arc<automation::Automation>>().inner().clone();
+                                let (service, events) = (notifications.clone(), handle.clone());
+                                let completed = title == "Download complete";
+                                // Extraction can take minutes; never block event handling.
+                                tauri::async_runtime::spawn(async move {
+                                    if completed {
+                                        if let Ok(job) = service.get(id.to_string()).await {
+                                            if let Some(result) = automation.extract(std::path::Path::new(&job.destination)).await {
+                                                let (title, body) = match result {
+                                                    Ok(folder) => ("Archive extracted", folder.display().to_string()),
+                                                    Err(error) => {
+                                                        tracing::warn!(%error, "archive extraction failed");
+                                                        ("Extraction failed", format!("{}: {error}", job.name))
+                                                    }
+                                                };
+                                                let _ = events.notification().builder().title(title).body(body).show();
+                                            }
+                                        }
+                                    }
+                                    // After extraction, so a finish action never interrupts it.
+                                    automation.finished(service, events).await;
                                 });
                             }
                             if let Some((id, title)) = message {

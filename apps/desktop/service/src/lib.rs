@@ -59,6 +59,9 @@ impl Drop for Session {
     }
 }
 
+/// Stable browser-bridge code: the link cannot be fetched outside the browser.
+const SOURCE_UNAVAILABLE: &str = "source_unavailable";
+
 fn invalid(message: impl Into<String>) -> EngineError {
     EngineError::Config(message.into())
 }
@@ -227,6 +230,43 @@ impl Session {
             .await?;
         queue.revision += 1;
         Ok(result.to_string())
+    }
+    /// Whether a browser download can be taken over. The browser cancels its
+    /// own copy once a capture is accepted, so a link that needs the page's
+    /// form post, or answers with a sign-in page, must stay with the browser.
+    /// A server too slow to judge within the bridge deadline is accepted, as
+    /// is a request already accepted. Runs outside the queue lock.
+    async fn fetchable(
+        &self,
+        request_id: &str,
+        capture: &okytes_browser_bridge::protocol::Capture,
+    ) -> bool {
+        let Ok(source) = url::Url::parse(&capture.url) else {
+            return true; // Rejected with its own code by `capture`.
+        };
+        if !matches!(source.scheme(), "http" | "https") {
+            return true;
+        }
+        if let Ok(id) = id(request_id) {
+            if matches!(self.store.load_job(id).await, Ok(Some(_))) {
+                return true;
+            }
+        }
+        let page = |kind: &str| {
+            let kind = kind.split(';').next().unwrap_or_default().trim();
+            kind.eq_ignore_ascii_case("text/html")
+                || kind.eq_ignore_ascii_case("application/xhtml+xml")
+        };
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.http.probe(&source, &capture.headers),
+        )
+        .await
+        {
+            Ok(Ok(probe)) => !probe.content_type.as_deref().is_some_and(page),
+            Ok(Err(_)) => false,
+            Err(_) => true,
+        }
     }
     /// Browser magnets use the same durable torrent queue as the desktop form.
     /// Browser clients cannot choose discovery or seeding settings.
@@ -560,11 +600,16 @@ impl okytes_browser_bridge::Handler for Session {
             }
             let result = match request.operation {
                 Operation::Ping => Ok(None),
-                Operation::Capture(capture) => self
-                    .capture(request.id.clone(), capture)
-                    .await
-                    .map(Some)
-                    .map_err(|_| "capture_rejected".into()),
+                Operation::Capture(capture) => {
+                    if self.fetchable(&request.id, &capture).await {
+                        self.capture(request.id.clone(), capture)
+                            .await
+                            .map(Some)
+                            .map_err(|_| "capture_rejected".into())
+                    } else {
+                        Err(SOURCE_UNAVAILABLE.into())
+                    }
+                }
                 Operation::Torrent(torrent) => self
                     .capture_torrent(torrent)
                     .await
@@ -800,10 +845,20 @@ impl DesktopService for Session {
             if input.urls.is_empty() || input.urls.len() > 100 {
                 return Err(invalid("import must contain 1–100 URLs"));
             }
+            // A pattern such as file[001-100].zip names a series of links.
+            let mut links = Vec::new();
+            for link in &input.urls {
+                links.extend(
+                    okytes_core::batch::expand(link, 100 - links.len().min(100))
+                        .map_err(|_| invalid("import must contain 1–100 URLs"))?,
+                );
+                if links.len() > 100 {
+                    return Err(invalid("import must contain 1–100 URLs"));
+                }
+            }
             let mut queue = self.queue.lock().await;
             let requested_destination = input.destination;
-            let urls: Vec<url::Url> = input
-                .urls
+            let urls: Vec<url::Url> = links
                 .iter()
                 .map(|s| {
                     let url = url::Url::parse(s).map_err(|_| invalid("invalid URL"))?;

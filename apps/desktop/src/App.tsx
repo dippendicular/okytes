@@ -12,6 +12,7 @@ import { DownloadDetails } from "./Details";
 import { ZipPreview } from "./ZipPreview";
 import { Crawler } from "./Crawler";
 import { CloudSettings, StorageSettings } from "./CloudSettings";
+import { AutomationSettings, StartAt, WhenDoneNotice } from "./Automation";
 import {
   api,
   bytes,
@@ -510,6 +511,7 @@ export function App() {
             </button>
           </div>
         )}
+        <WhenDoneNotice />
         <section className="toolbar" aria-label="Search and filters">
           <input
             ref={searchInput}
@@ -842,7 +844,7 @@ export function App() {
           </label>
           <p className="muted">
             Existing files are preserved. Filename conflicts receive a numbered
-            suffix.
+            suffix. A pattern such as file[001-100].zip adds the whole series.
           </p>
           <button
             type="button"
@@ -960,6 +962,9 @@ export function App() {
                 </>
               )}
             </dl>
+            {["Queued", "Probing", "Downloading", "Paused", "Failed"].includes(
+              selectedJob.state,
+            ) && <StartAt key={selectedJob.id} job={selectedJob} />}
             {selectedJob.protocol !== "torrent" &&
               ["Paused", "Queued", "Failed"].includes(selectedJob.state) && (
                 <form
@@ -1283,6 +1288,7 @@ export function App() {
               />
               Open a download window when a download starts
             </label>
+            <AutomationSettings />
             <CloudSettings />
             <StorageSettings />
             <button className="primary" disabled={busy}>

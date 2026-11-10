@@ -5,7 +5,41 @@ or Security entries. Release automation requires an exact matching section.
 
 ## [Unreleased]
 
+### Added
+
+- Batch patterns: a link such as `https://host/file[001-100].zip` adds the
+  whole series. `[1-20]`, zero-padded `[001-100]`, stepped `[0-100:10]` and
+  `[a-f]` ranges are supported, up to 100 links per import.
+- Desktop: "Start at" in a download's details holds it paused until a chosen
+  time. Okytes must be running; it does not wake a sleeping computer.
+- Desktop: after every download has finished, optionally sleep, shut down or
+  quit Okytes. The choice applies once, lasts until Okytes is closed, and
+  waits 60 seconds with a Cancel button first.
+- Desktop: optional extraction of zip, 7z and tar archives into a new folder
+  beside the finished download, using the system's `tar` (bsdtar or unzip on
+  Linux). Off by default.
+
 ### Changed
+
+- Faster writes on fast links: a connection commits every 2 MiB or once per
+  second, whichever comes first, instead of syncing and checkpointing every
+  256 KiB, and keeps one file handle per request. Verification reads in 1 MiB
+  blocks.
+- A closed schedule window now ends running requests cleanly: each commits
+  what it received and releases its connection, and new requests start when
+  the window opens.
+- Browser capture: Okytes checks that it can fetch a link before the browser
+  download is cancelled. Links that need the page's form post or answer with
+  a sign-in page stay in the browser (`source_unavailable`). A captured
+  download is removed from the browser's list instead of staying as
+  "cancelled", and a link without a filename uses the browser's name.
+- Server filenames in the RFC 5987 form (`filename*=UTF-8''…`) are used, so
+  non-ASCII names are kept.
+
+### Fixed
+
+- A finished download no longer fails to publish on drives without hard
+  links (exFAT, FAT32 and some network shares).
 
 - Dynamic segmentation now also splits a range that is being downloaded: a free
   connection takes the unreserved second half of the largest unfinished range,

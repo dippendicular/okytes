@@ -72,6 +72,11 @@ const RETRY_PROGRESS_BYTES: u64 = 64 * 1024;
 /// A resumable request with no body bytes for this long is replaced by a new
 /// one from the last durable offset instead of waiting out the read timeout.
 const STALL_SECS: u64 = 20;
+/// Largest write buffer per request. Fast links reach it and pay one sync and
+/// one checkpoint per buffer; slower links commit on the interval instead, so
+/// progress stays current and a crash re-fetches at most one interval.
+const FLUSH_BYTES: usize = 2 * 1024 * 1024;
+const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 /// One in-flight request: its live byte ownership and the last record the
 /// store holds. The record lock orders a worker's checkpoints against a split
 /// of its tail; the scheduler only ever tries it, because workers make progress
@@ -794,10 +799,14 @@ impl Engine {
             );
             while !pending.is_empty() || !workers.is_empty() {
                 let admission = self.config.fixed_concurrency.unwrap_or(tuning.limit());
-                while !self.queue_allowed()? && self.running(id).await? {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    // A closed schedule window is not a throughput sample.
+                // While a schedule window keeps the queue closed nothing new
+                // starts, but running requests are still polled so they can
+                // commit what they hold and release their connections.
+                let open = self.queue_allowed()?;
+                if !open {
+                    // A closed window is not a throughput sample.
                     window = Instant::now();
+                    pulse.received.store(0, Ordering::Relaxed);
                 }
                 let live = first_error.is_none() && self.running(id).await?;
                 if !live {
@@ -807,6 +816,7 @@ impl Engine {
                 // whether it is waiting or being downloaded. Both ownership
                 // records are persisted atomically before the new half starts.
                 while live
+                    && open
                     && probe.checkpoint_ranges.is_none()
                     && workers.len() + pending.len() < admission
                     && total_segments < segment_cap
@@ -875,7 +885,7 @@ impl Engine {
                     pending.push_back(stolen);
                     total_segments += 1;
                 }
-                while workers.len() < admission && !pending.is_empty() {
+                while open && workers.len() < admission && !pending.is_empty() {
                     if let Some(segment) = pending.pop_front() {
                         let stop = segment.end.min(
                             segment
@@ -916,7 +926,7 @@ impl Engine {
                 if failed > 0 {
                     tuning.health(failed, 0.0);
                 }
-                if window.elapsed() >= Duration::from_millis(250) {
+                if open && window.elapsed() >= Duration::from_millis(250) {
                     progress += pulse.bytes.swap(0, Ordering::Relaxed);
                     ewma.record(pulse.received.swap(0, Ordering::Relaxed), window.elapsed());
                     tuning.observe(ewma.value());
@@ -968,7 +978,12 @@ impl Engine {
             // Bytes a failed request reserved but never committed are free again.
             flight.lease.rewind(segment.current_offset());
             let stop = flight.lease.stop();
-            if segment.current_offset() >= stop || !self.running(job.id).await? {
+            // A closed schedule window releases the connection; the scheduler
+            // starts a new request when the window opens.
+            if segment.current_offset() >= stop
+                || !self.queue_allowed()?
+                || !self.running(job.id).await?
+            {
                 break;
             }
             if failures > 0 {
@@ -1069,8 +1084,11 @@ impl Engine {
         shared: Option<(&Flight, &Pulse)>,
         link: &crate::telemetry::LinkGuard<'_>,
     ) -> EngineResult<()> {
-        let buffer_limit = self.config.write_buffer_size.min(256 * 1024);
-        let mut pending = Vec::with_capacity(buffer_limit);
+        let buffer_limit = self.config.write_buffer_size.min(FLUSH_BYTES);
+        let mut pending = Vec::with_capacity(buffer_limit.min(256 * 1024));
+        // One handle for the whole request instead of one open per checkpoint.
+        let mut file = self.files.open(&job.partial_path).await?;
+        let mut flushed = Instant::now();
         let mut control_check = Instant::now() - Duration::from_millis(100);
         // Only a resumable request is worth replacing when it goes silent.
         let stall =
@@ -1093,6 +1111,18 @@ impl Engine {
                             url: Box::new(job.url.clone()),
                         });
                         break;
+                    }
+                    if !pending.is_empty() && flushed.elapsed() >= FLUSH_INTERVAL {
+                        self.durable_checkpoint(
+                            &mut file,
+                            &job.partial_path,
+                            segment,
+                            &pending,
+                            shared,
+                        )
+                        .await?;
+                        pending.clear();
+                        flushed = Instant::now();
                     }
                     continue;
                 }
@@ -1138,7 +1168,11 @@ impl Engine {
                     if granted > 0 {
                         break granted;
                     }
-                    if !self.running(job.id).await? {
+                    // A resumable request does not hold its connection through
+                    // a closed schedule window; it continues from here later.
+                    if !self.running(job.id).await?
+                        || (shared.is_some() && !self.queue_allowed()?)
+                    {
                         break 'body;
                     }
                     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1149,10 +1183,17 @@ impl Engine {
                     pulse.received.fetch_add(take as u64, Ordering::Relaxed);
                 }
                 incoming = &incoming[take..];
-                if pending.len() == buffer_limit {
-                    self.durable_checkpoint(&job.partial_path, segment, &pending, shared)
-                        .await?;
+                if pending.len() == buffer_limit || flushed.elapsed() >= FLUSH_INTERVAL {
+                    self.durable_checkpoint(
+                        &mut file,
+                        &job.partial_path,
+                        segment,
+                        &pending,
+                        shared,
+                    )
+                    .await?;
                     pending.clear();
+                    flushed = Instant::now();
                 }
             }
             last_data = Instant::now();
@@ -1163,7 +1204,7 @@ impl Engine {
         // Keep what arrived before a pause, a split or a dropped connection:
         // the next request continues from here instead of fetching it again.
         if !pending.is_empty() {
-            self.durable_checkpoint(&job.partial_path, segment, &pending, shared)
+            self.durable_checkpoint(&mut file, &job.partial_path, segment, &pending, shared)
                 .await?;
         }
         if let Some(source) = failure {
@@ -1185,6 +1226,7 @@ impl Engine {
     /// Single ordering point: write → sync_data → checkpoint commit.
     async fn durable_checkpoint(
         &self,
+        file: &mut tokio::fs::File,
         path: &Path,
         segment: &mut SegmentRecord,
         bytes: &[u8],
@@ -1196,15 +1238,14 @@ impl Engine {
         next.last_checkpoint = Utc::now();
         let committed = &mut next;
         commit_durable(
-            async {
-                let mut file = self.files.open(path).await?;
+            async move {
                 file.seek(std::io::SeekFrom::Start(offset))
                     .await
                     .map_err(|e| io(path, e))?;
                 file.write_all(bytes).await.map_err(|e| io(path, e))?;
                 Ok(file)
             },
-            |file: tokio::fs::File| async move { file.sync_data().await.map_err(|e| io(path, e)) },
+            |file| async move { file.sync_data().await.map_err(|e| io(path, e)) },
             async {
                 if let Some((flight, _)) = shared {
                     // Read the end under the record lock: a split persisted
@@ -1314,12 +1355,21 @@ impl Engine {
             ConflictStrategy::Overwrite => tokio::fs::rename(&job.partial_path, &job.output_path)
                 .await
                 .map_err(|e| io(&job.output_path, e))?,
-            _ => {
-                tokio::fs::hard_link(&job.partial_path, &job.output_path)
-                    .await
-                    .map_err(|e| io(&job.output_path, e))?;
-                remove_partial(&job.partial_path).await?;
-            }
+            _ => match tokio::fs::hard_link(&job.partial_path, &job.output_path).await {
+                Ok(()) => remove_partial(&job.partial_path).await?,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return Err(io(&job.output_path, e))
+                }
+                // exFAT/FAT32 drives and some network shares have no hard
+                // links. The name was free a moment ago (resolved above), so
+                // move the file there rather than fail a finished download.
+                Err(_) if !job.output_path.exists() => {
+                    tokio::fs::rename(&job.partial_path, &job.output_path)
+                        .await
+                        .map_err(|e| io(&job.output_path, e))?
+                }
+                Err(e) => return Err(io(&job.output_path, e)),
+            },
         }
         self.transition(id, JobState::Completed).await?;
         let _ = self.events.send(EngineEvent::JobCompleted { job_id: id });
@@ -1357,7 +1407,7 @@ async fn remove_partial(path: &Path) -> EngineResult<()> {
         Err(e) => Err(io(path, e)),
     }
 }
-/// Compute SHA-256 using a fixed 64 KiB buffer.
+/// Compute SHA-256 using a fixed 1 MiB buffer.
 pub async fn hash_file(path: &Path) -> EngineResult<String> {
     let file = tokio::fs::File::open(path).await.map_err(|e| io(path, e))?;
     hash_open_file(file, path, || async { Ok(true) })
@@ -1369,7 +1419,7 @@ async fn hash_open_file<F: FnMut() -> R, R: Future<Output = EngineResult<bool>>>
     path: &Path,
     mut running: F,
 ) -> EngineResult<Option<String>> {
-    let mut buffer = vec![0; 64 * 1024];
+    let mut buffer = vec![0; 1024 * 1024];
     let mut hash = Sha256::new();
     let mut checked = Instant::now() - Duration::from_millis(100);
     loop {
