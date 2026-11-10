@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq5f2s4WWrpYwKQaI1Pn0ogLZKbK6igyrsZd+Cs61K9rWkRwFRMR5F5ckPZkPf4UyuBQfG2IzMTsxvxVv6GmpGIqJzr5AZL5Uo23ig9sLr5K9IP9RJ/5EdewDezXpXH2IHwQnwk04ZvEoO5kp4vx2kgHL2YWCOmZ36QTLX4jqawh/Yly9QxY9+KaN0MRM02Eq+KP3A5ARkmxwdMlFUKn30dV6x024/hqyKurc7oQFkNtSI4Pz1+d6vToaOv06TPBV9ziTvTzoFCRIs4VbrQq6hmRLXooDLfWozT0EJ98QlZnJ95m9Hf+3UPi76Y4ltA/+7xmv2UL6XCeGa8R+gBIS7wIDAQAB",
   "name": "Okytes Download Manager",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Send downloads to Okytes with browser fallback and explicit site permissions.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -11,11 +11,15 @@
     "contextMenus",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "webRequest"
   ],
   "optional_permissions": [
-    "cookies",
-    "webRequest"
+    "cookies"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "optional_host_permissions": [
     "http://*/*",

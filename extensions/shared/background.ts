@@ -4,6 +4,8 @@ import {
   BridgeError,
   describe,
   handoff,
+  handoffTorrent,
+  handoffTorrentUrl,
   intercept,
   nativeRequest,
   mediaSource,
@@ -15,6 +17,7 @@ import { ownPage } from "./messages";
 const observed = new Map<string, { at: number; headers: [string, string][] }>();
 const bypass = new Map<string, number>();
 const candidates = new Map<number, string[]>();
+const announcedMedia = new Map<string, number>();
 // Duplicate suppression: URLs being handed off now, and URLs Okytes accepted
 // in the last few seconds through any path (context menu, popup, automatic).
 const inflight = new Set<string>();
@@ -60,6 +63,18 @@ async function rules(): Promise<Rules> {
     return defaults;
   }
 }
+// Earlier releases persisted `enabled: false` as their initial value. Migrate
+// that one-time default, while preserving any later user choice.
+async function initializeDefaults(): Promise<void> {
+  const stored = await api.storage.local.get("rules");
+  const marker = await api.storage.local.get("autoCaptureDefaultsVersion");
+  if (marker.autoCaptureDefaultsVersion === 1) return;
+  const value = stored.rules ? normalizeRules(stored.rules) : defaults;
+  await api.storage.local.set({
+    rules: { ...value, enabled: true },
+    autoCaptureDefaultsVersion: 1,
+  });
+}
 function originPattern(url: string): string {
   return `${new URL(url).origin}/*`;
 }
@@ -93,6 +108,26 @@ async function automatic(item: DownloadItem): Promise<void> {
   }
   const value = await rules();
   if (!value.enabled) return;
+  // `.torrent` is metainfo, not an ordinary payload. The desktop fetches it
+  // with the current origin session and imports it into the native queue.
+  if (/\.torrent(?:[?#]|$)/i.test(url)) {
+    inflight.add(url);
+    try {
+      const response = await handoffTorrentUrl(api, url, await sessionHeaders(url));
+      if (!response.ok || !response.job_id) {
+        feedback(response.error ?? "capture_rejected", "torrent");
+        return;
+      }
+      remember(url);
+      feedback(null, "torrent");
+      await api.downloads.cancel(item.id).catch(() => {});
+    } catch (error) {
+      feedback(error instanceof BridgeError ? error.code : "host_exited", "torrent");
+    } finally {
+      inflight.delete(url);
+    }
+    return;
+  }
   if (!item.filename && value.types.length) {
     if (awaitingName.size >= 32)
       awaitingName.delete(awaitingName.keys().next().value ?? -1);
@@ -115,6 +150,29 @@ async function automatic(item: DownloadItem): Promise<void> {
     inflight.delete(url);
   }
 }
+function isMediaRequest(url: string): boolean {
+  try {
+    const value = new URL(url);
+    // Resolver adapters, rather than ephemeral player requests, own page URL
+    // resolution, track selection and expiry refresh. The browser only offers
+    // an explicit HLS/DASH manifest to the built-in media transport.
+    return /\.(m3u8|mpd)(?:$|\.)/i.test(value.pathname);
+  } catch {
+    return false;
+  }
+}
+function announceMedia(url: string): void {
+  if ((announcedMedia.get(url) ?? 0) > Date.now()) return;
+  announcedMedia.set(url, Date.now() + 30000);
+  const action = api.action;
+  if (action)
+    void Promise.all([
+      action.setBadgeText({ text: "▶" }),
+      action.setBadgeBackgroundColor({ color: "#1565c0" }),
+      action.setTitle({ title: "Okytes — media detected; click to review" }),
+    ]).catch(() => {});
+  setTimeout(() => announcedMedia.delete(url), 30000);
+}
 api.downloads.onCreated.addListener((item) => {
   void automatic(item).catch(() => feedback("host_exited"));
 });
@@ -131,15 +189,9 @@ api.downloads.onChanged.addListener((delta) => {
   void automatic({ ...item, filename }).catch(() => feedback("host_exited"));
 });
 
-// Optional webRequest has no blanket granted host access. The browser only
-// delivers requests for sites for which the user granted optional permission.
 let observing = false;
 async function observe(): Promise<void> {
-  if (
-    observing ||
-    !(await api.permissions.contains({ permissions: ["webRequest"] }))
-  )
-    return;
+  if (observing) return;
   try {
     const listener = (request: {
       url: string;
@@ -187,7 +239,7 @@ async function observe(): Promise<void> {
         if (
           request.tabId < 0 ||
           !validUrl(request.url) ||
-          !/\.(m3u8|mpd)(?:[?#]|$)/i.test(request.url)
+          !isMediaRequest(request.url)
         )
           return;
         if (candidates.size >= 32 && !candidates.has(request.tabId))
@@ -196,13 +248,12 @@ async function observe(): Promise<void> {
         if (!entries.includes(request.url) && entries.length < 32)
           entries.push(request.url);
         candidates.set(request.tabId, entries);
+        announceMedia(request.url);
       },
       { urls: ["http://*/*", "https://*/*"] },
     );
     observing = true;
-  } catch {
-    /* Optional permission absent: explicit link capture remains available. */
-  }
+  } catch { /* Explicit link capture remains available if observation fails. */ }
 }
 void observe();
 api.permissions.onAdded.addListener(() => {
@@ -234,7 +285,12 @@ async function captureUrls(
   for (const url of urls) {
     try {
       const response = await handoff(api, {
-        url: media ? mediaSource(url) : url,
+        // Manifest URLs use the media pipeline; signed direct media endpoints
+        // (including YouTube's videoplayback requests) are regular HTTP jobs.
+        url:
+          media && /\.(m3u8|mpd)(?:[?#]|$)/i.test(url)
+            ? mediaSource(url)
+            : url,
         filename: null,
         sha256: null,
         headers: await sessionHeaders(url),
@@ -253,6 +309,34 @@ async function captureUrls(
   const errors = [...codes];
   feedback(ok ? null : (errors[0] ?? "capture_rejected"), `${urls.length} link(s)`);
   return { accepted: ok, failed: urls.length - ok, errors: errors.map(describe) };
+}
+async function captureTorrent(magnet: string): Promise<boolean> {
+  try {
+    const response = await handoffTorrent(api, magnet);
+    if (!response.ok || !response.job_id) {
+      feedback(response.error ?? "capture_rejected", "torrent");
+      return false;
+    }
+    feedback(null, "torrent");
+    return true;
+  } catch (error) {
+    feedback(error instanceof BridgeError ? error.code : "host_exited", "torrent");
+    return false;
+  }
+}
+async function captureTorrentUrl(source: string): Promise<boolean> {
+  try {
+    const response = await handoffTorrentUrl(api, source, await sessionHeaders(source));
+    if (!response.ok || !response.job_id) {
+      feedback(response.error ?? "capture_rejected", "torrent");
+      return false;
+    }
+    feedback(null, "torrent");
+    return true;
+  } catch (error) {
+    feedback(error instanceof BridgeError ? error.code : "host_exited", "torrent");
+    return false;
+  }
 }
 async function message(value: unknown, tab?: Tab): Promise<unknown> {
   if (!value || typeof value !== "object") throw new Error("Invalid command");
@@ -294,7 +378,7 @@ async function message(value: unknown, tab?: Tab): Promise<unknown> {
     const links = await collect(active ?? {});
     return [
       ...new Set([
-        ...links.filter((url) => /\.(m3u8|mpd)(?:[?#]|$)/i.test(url)),
+        ...links.filter(isMediaRequest),
         ...(candidates.get(active?.id ?? -1) ?? []),
       ]),
     ].slice(0, 32);
@@ -338,11 +422,14 @@ async function register(): Promise<void> {
 // Registered on install and on every browser start: Firefox event pages do not
 // reliably keep menus across restarts, and re-creating them is idempotent.
 api.runtime.onInstalled.addListener(() => {
+  void initializeDefaults().catch(() => {});
   void register();
 });
 api.runtime.onStartup.addListener(() => {
+  void initializeDefaults().catch(() => {});
   void register();
 });
+void initializeDefaults().catch(() => {});
 menus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "collect-links") {
     void collect(tab ?? {})
@@ -353,12 +440,26 @@ menus.onClicked.addListener((info, tab) => {
     return;
   }
   const url = info.linkUrl || info.srcUrl;
-  if (!url || !validUrl(url)) {
+  if (!url) {
+    feedback("invalid_url");
+    return;
+  }
+  if (url.toLowerCase().startsWith("magnet:")) {
+    void captureTorrent(url);
+    return;
+  }
+  if (!validUrl(url)) {
     feedback("invalid_url");
     return;
   }
   // Private windows stay in the browser, matching automatic capture.
   if (tab?.incognito) return;
+  if (/\.torrent(?:[?#]|$)/i.test(url)) {
+    void captureTorrentUrl(url).then((accepted) => {
+      if (!accepted) return api.downloads.download({ url });
+    });
+    return;
+  }
   void captureUrls([url]).then((result) => {
     // Explicit fallback: the user asked for this file, so the browser fetches
     // it and the toolbar badge explains why Okytes did not.

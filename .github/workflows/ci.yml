@@ -122,6 +122,25 @@ jobs:
       - run: pnpm --dir apps/desktop build:quick
       - run: node dev-tools/scripts/prepare-vendor.mjs
       - run: cargo test -p okytes-cli --test process --release --locked -- --ignored --nocapture
+  scheduler-benchmark:
+    # Performance is evidence, not a flaky pass/fail threshold. It runs on the
+    # weekly/manual path and preserves raw measurements for review.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.120.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: scheduler-benchmark
+      - run: node dev-tools/scripts/prepare-vendor.mjs
+      - name: Run fixed versus adaptive scheduler scenarios
+        run: cargo run -p okytes-bench --release --locked -- run --runs 3 --mode both --output .tools/scheduler-benchmark
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduler-benchmark-${{ github.run_id }}
+          path: .tools/scheduler-benchmark/**
   workflows:
     runs-on: ubuntu-22.04
     steps:

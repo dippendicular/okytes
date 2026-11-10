@@ -63,6 +63,24 @@ fn validation_blocks_paths_credentials_reserved_headers_and_versions() {
         headers: vec![("Range".into(), "bytes=1-2".into())],
     });
     assert!(request.validate().is_err());
+    request.operation = Operation::Torrent(okytes_browser_bridge::protocol::Torrent {
+        magnet: Some("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".into()),
+        metainfo_url: None,
+        headers: vec![],
+    });
+    assert!(request.validate().is_ok());
+    request.operation = Operation::Torrent(okytes_browser_bridge::protocol::Torrent {
+        magnet: Some("magnet:?dn=missing-info-hash".into()),
+        metainfo_url: None,
+        headers: vec![],
+    });
+    assert!(request.validate().is_err());
+    request.operation = Operation::Torrent(okytes_browser_bridge::protocol::Torrent {
+        magnet: None,
+        metainfo_url: Some("https://example.com/release.torrent".into()),
+        headers: vec![("accept".into(), "application/x-bittorrent".into())],
+    });
+    assert!(request.validate().is_ok());
 }
 
 #[tokio::test]

@@ -24,6 +24,21 @@ pub struct Capture {
     pub headers: Vec<(String, String)>,
 }
 
+/// A torrent source explicitly selected in the browser. Metainfo bytes never
+/// cross the native-message boundary: the desktop fetches a bounded `.torrent`
+/// URL itself after this request has passed validation.
+#[derive(Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[ts(export, export_to = "../../../extensions/shared/generated/")]
+pub struct Torrent {
+    /// A bounded v1 BitTorrent magnet URI.
+    pub magnet: Option<String>,
+    /// HTTP(S) location of a `.torrent` metainfo document, without userinfo.
+    pub metainfo_url: Option<String>,
+    /// Origin-scoped headers supplied for this metainfo request only.
+    pub headers: Vec<(String, String)>,
+}
+
 /// Operations available to browser clients. No arbitrary queue/admin access.
 #[derive(Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[serde(tag = "kind", content = "value", deny_unknown_fields)]
@@ -33,6 +48,8 @@ pub enum Operation {
     Ping,
     /// Enqueue one explicit transfer.
     Capture(Capture),
+    /// Add one browser-selected magnet to the torrent queue.
+    Torrent(Torrent),
 }
 
 /// Idempotency ID survives reconnects; protocol version is checked by Rust.
@@ -120,6 +137,37 @@ impl Request {
                 return Err("invalid_hash");
             }
             validate_headers(&capture.headers)?;
+        }
+        if let Operation::Torrent(torrent) = &self.operation {
+            match (&torrent.magnet, &torrent.metainfo_url) {
+                (Some(magnet), None) => {
+                    let url = url::Url::parse(magnet).map_err(|_| "invalid_torrent")?;
+                    if magnet.len() > 8192
+                        || url.scheme() != "magnet"
+                        || url.host_str().is_some()
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                        || !url.query_pairs().any(|(key, value)| {
+                            key == "xt" && value.to_ascii_lowercase().starts_with("urn:btih:")
+                        })
+                    {
+                        return Err("invalid_torrent");
+                    }
+                }
+                (None, Some(source)) => {
+                    let url = url::Url::parse(source).map_err(|_| "invalid_torrent")?;
+                    if source.len() > 8192
+                        || !matches!(url.scheme(), "http" | "https")
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                        || url.host_str().is_none()
+                    {
+                        return Err("invalid_torrent");
+                    }
+                    validate_headers(&torrent.headers)?;
+                }
+                _ => return Err("invalid_torrent"),
+            }
         }
         Ok(())
     }

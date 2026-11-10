@@ -22,8 +22,9 @@ pub type SegmentId = Uuid;
 /// # Invariant
 ///
 /// Resume is only permitted if the current remote identity matches the one
-/// stored at download start. Strong ETags are required for `If-Range`; weak
-/// ETags (`W/...`) are never used for byte-range resume.
+/// stored at download start. A strong ETag is preferred for `If-Range`; a
+/// Last-Modified date with an unchanged length is the standards-compliant
+/// fallback. Weak ETags (`W/...`) are never used for byte-range resume.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RemoteIdentity {
     /// Strong ETag value, if provided. Weak ETags are excluded.
@@ -64,6 +65,14 @@ impl RemoteIdentity {
                     .iter()
                     .all(|&b| b == 0x21 || (b >= 0x23 && b != 0x7f))
         })
+    }
+
+    /// Return the validator appropriate for HTTP `If-Range`. RFC 9110 permits
+    /// either a strong entity tag or an HTTP-date; the date fallback lets a
+    /// range-capable origin without ETags resume safely when its observed
+    /// length and modification date still match.
+    pub fn if_range(&self) -> Option<&str> {
+        self.strong_etag().or(self.last_modified.as_deref())
     }
 
     /// Checks if a newly observed remote identity is compatible with this one.
@@ -378,6 +387,10 @@ mod tests {
         }
         identity.etag = Some("\"strong\"".into());
         assert_eq!(identity.strong_etag(), Some("\"strong\""));
+        assert_eq!(identity.if_range(), Some("\"strong\""));
+        identity.etag = None;
+        identity.last_modified = Some("Wed, 21 Oct 2015 07:28:00 GMT".into());
+        assert_eq!(identity.if_range(), Some("Wed, 21 Oct 2015 07:28:00 GMT"));
         assert!(!identity.is_compatible(&RemoteIdentity {
             etag: None,
             last_modified: None,

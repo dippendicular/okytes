@@ -17,6 +17,8 @@ serde_json.workspace = true
 uuid.workspace = true
 url.workspace = true
 tracing.workspace = true
+base64 = "0.22"
+futures.workspace = true
 okytes-browser-bridge = { version = "=0.0.2", path = "../../../crates/browser-bridge" }
 
 [dev-dependencies]

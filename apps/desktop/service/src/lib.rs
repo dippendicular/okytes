@@ -12,7 +12,10 @@ use okytes_core::{
     service::{DownloadService, EngineEvent},
     state::JobState,
     types::{ConflictStrategy, DownloadRequest, JobId, JobRecord},
+    transport::Transport,
 };
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use futures::StreamExt;
 use okytes_persistence::{files::LocalFiles, EngineLease, SqliteStore};
 use okytes_torrent_types::TorrentService;
 use okytes_transport_http::HttpTransport;
@@ -40,6 +43,7 @@ struct Queue {
 pub struct Session {
     database_path: PathBuf,
     engine: Arc<Engine>,
+    http: Arc<HttpTransport>,
     torrent: Arc<okytes_transport_torrent::Adapter>,
     media: Arc<okytes_transport_media::MediaTransport>,
     store: Arc<SqliteStore>,
@@ -224,6 +228,58 @@ impl Session {
         queue.revision += 1;
         Ok(result.to_string())
     }
+    /// Browser magnets use the same durable torrent queue as the desktop form.
+    /// Browser clients cannot choose discovery or seeding settings.
+    pub async fn capture_torrent(
+        &self,
+        torrent: okytes_browser_bridge::protocol::Torrent,
+    ) -> EngineResult<String> {
+        let (magnet, metainfo) = match (torrent.magnet, torrent.metainfo_url) {
+            (Some(magnet), None) => (Some(magnet), None),
+            (None, Some(source)) => {
+                let source = url::Url::parse(&source).map_err(|_| invalid("invalid_torrent"))?;
+                let probe = self
+                    .http
+                    .probe(&source, &torrent.headers)
+                    .await
+                    .map_err(|_| invalid("torrent_fetch_failed"))?;
+                // Metainfo is intentionally small. Reject before reading an
+                // unbounded response, including a server that ignores ranges.
+                if probe.content_length.is_some_and(|n| n > 512 * 1024) {
+                    return Err(invalid("invalid_torrent"));
+                }
+                let response = self
+                    .http
+                    .fetch(&probe.final_url, &torrent.headers, None, &probe.remote_identity)
+                    .await
+                    .map_err(|_| invalid("torrent_fetch_failed"))?;
+                if !(200..300).contains(&response.status) {
+                    return Err(invalid("torrent_fetch_failed"));
+                }
+                if response.content_length.is_some_and(|n| n > 512 * 1024) {
+                    return Err(invalid("invalid_torrent"));
+                }
+                let mut body = response.body;
+                let mut bytes = Vec::with_capacity(response.content_length.unwrap_or(0) as usize);
+                while let Some(chunk) = body.next().await {
+                    let chunk = chunk.map_err(|_| invalid("torrent_fetch_failed"))?;
+                    if bytes.len().saturating_add(chunk.len()) > 512 * 1024 {
+                        return Err(invalid("invalid_torrent"));
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                (None, Some(STANDARD.encode(bytes)))
+            }
+            _ => return Err(invalid("invalid_torrent")),
+        };
+        self.add_torrent(okytes_torrent_types::Input {
+            magnet,
+            metainfo,
+            destination: None,
+            options: Default::default(),
+        })
+        .await
+    }
     /// Open durable history and recover interrupted transfers with exclusive ownership.
     pub async fn open(database: &Path, destination: &Path) -> EngineResult<Arc<Self>> {
         // A losing contender must not migrate or create a writable store before
@@ -266,9 +322,8 @@ impl Session {
         config.max_retries = config.max_retries.min(4);
         config.retry_max_delay_ms = config.retry_max_delay_ms.min(10_000);
         config.traffic = settings.traffic.clone();
-        let media = okytes_transport_media::MediaTransport::new(Arc::new(
-            HttpTransport::new(&config).map_err(|e| invalid(e.to_string()))?,
-        ));
+        let http = Arc::new(HttpTransport::new(&config).map_err(|e| invalid(e.to_string()))?);
+        let media = okytes_transport_media::MediaTransport::new(http.clone());
         let transport = Arc::new(okytes_transport_ftp::router::Router {
             files: Arc::new(
                 okytes_transport_ftp::FileTransport::new(
@@ -297,6 +352,7 @@ impl Session {
         let session = Arc::new(Self {
             database_path: database.into(),
             engine,
+            http,
             torrent,
             media,
             store,
@@ -506,6 +562,11 @@ impl okytes_browser_bridge::Handler for Session {
                 Operation::Ping => Ok(None),
                 Operation::Capture(capture) => self
                     .capture(request.id.clone(), capture)
+                    .await
+                    .map(Some)
+                    .map_err(|_| "capture_rejected".into()),
+                Operation::Torrent(torrent) => self
+                    .capture_torrent(torrent)
                     .await
                     .map(Some)
                     .map_err(|_| "capture_rejected".into()),

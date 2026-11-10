@@ -55,6 +55,9 @@ impl HttpTransport {
             // Semaphores below bound active requests, not active plus idle sockets.
             .pool_max_idle_per_host(config.max_connections_per_origin)
             .pool_idle_timeout(Duration::from_secs(30))
+            // Notice a peer that vanished (sleep, Wi-Fi change, cable pull)
+            // without waiting for the full read timeout on a silent socket.
+            .tcp_keepalive(Duration::from_secs(15))
             .build()
             .map_err(|e| TransportError::Configuration(e.to_string()))?;
         Ok(Self {
@@ -134,10 +137,11 @@ impl HttpTransport {
                     HeaderValue::from_str(&format!("bytes={start}-{end}"))
                         .map_err(|e| request_error(&target, e))?,
                 );
-                if let Some(etag) = identity.and_then(RemoteIdentity::strong_etag) {
+                if let Some(validator) = identity.and_then(RemoteIdentity::if_range) {
                     map.insert(
                         "if-range",
-                        HeaderValue::from_str(etag).map_err(|e| request_error(&target, e))?,
+                        HeaderValue::from_str(validator)
+                            .map_err(|e| request_error(&target, e))?,
                     );
                 }
             }
@@ -312,7 +316,7 @@ impl Transport for HttpTransport {
                 .headers()
                 .get("accept-ranges")
                 .is_some_and(|h| h == "bytes")
-                && remote_identity.strong_etag().is_some();
+                && remote_identity.if_range().is_some();
             let result = ProbeResult {
                 checkpoint_ranges: None,
                 final_url: response.url().clone(),

@@ -3,6 +3,28 @@
 Release sections use `## [MAJOR.MINOR.PATCH]` followed by Added, Changed, Fixed
 or Security entries. Release automation requires an exact matching section.
 
+## [Unreleased]
+
+### Changed
+
+- Dynamic segmentation now also splits a range that is being downloaded: a free
+  connection takes the unreserved second half of the largest unfinished range,
+  and the running request stops at the new boundary. Connections are added and
+  rebalanced on a 250 ms clock instead of only when a request (up to 64 MiB)
+  ends. Ownership records per download are capped at eight per allowed
+  connection (at most 1,024).
+- A dropped connection, a pause or a split keeps the bytes already received
+  instead of discarding up to 256 KiB per connection.
+- A request that fails after committing at least 64 KiB no longer uses up the
+  retry budget, so an unstable link that keeps making progress finishes.
+- A resumable request with no data for 20 seconds (or the read timeout, if
+  shorter) is replaced from its last durable offset; HTTP connections use TCP
+  keep-alive.
+- Website crawler: robots.txt `Allow`, `*` and `$` patterns with longest-match
+  precedence, grouped `User-agent` lines and `Crawl-delay` (up to 5 seconds);
+  links from `srcset`, `data-src`/`data-href` and pages with `<base href>`;
+  each page is queued once.
+
 ## [0.0.2]
 
 Versioning: `MAJOR.BETA.TEST`. 0.0.2 is the second test release. The previous

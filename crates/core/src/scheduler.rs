@@ -14,7 +14,8 @@
 //! - Per-origin connection caps are enforced globally, not per job.
 //! - Concurrency increases only while measured effective throughput improves.
 //! - Retries use exponential backoff with jitter; `Retry-After` is honored.
-//! - Idle slow segments may be split or stolen from; never duplicate-write.
+//! - A free worker takes half of the largest unfinished range, waiting or in
+//!   flight; a byte is never owned by two writers.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -190,10 +191,13 @@ pub struct AdaptiveConcurrency {
     probe_latency_ms: Option<f64>,
 }
 impl AdaptiveConcurrency {
-    /// Start with one worker, bounded by the configured cap.
+    /// Start with two workers when possible. One worker is often still inside
+    /// TCP slow-start by the time the first throughput window closes; a small
+    /// bounded warm-up gives range-capable large files immediate acceleration.
+    /// Health feedback still drops to one on resets or throttling.
     pub fn new(max: usize) -> Self {
         Self {
-            limit: 1,
+            limit: max.clamp(1, 2),
             max: max.max(1),
             baseline: None,
             windows: 0,
@@ -296,10 +300,11 @@ mod tests {
     #[test]
     fn adaptive_probes_gain_then_health_backs_off() {
         let mut scheduler = AdaptiveConcurrency::new(3);
+        assert_eq!(scheduler.limit(), 2);
         for _ in 0..3 {
             scheduler.observe(100.0);
         }
-        assert_eq!(scheduler.limit(), 2);
+        assert_eq!(scheduler.limit(), 3);
         for _ in 0..3 {
             scheduler.observe(200.0);
         }
@@ -314,9 +319,9 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn saturated_link_settles_without_oscillation(noise in proptest::collection::vec(-4i32..=4, 100..300), max in 2usize..128) {
-            let mut scheduler=AdaptiveConcurrency::new(max);let mut changes=0;let mut previous=1;
+            let mut scheduler=AdaptiveConcurrency::new(max);let mut changes=0;let mut previous=scheduler.limit();
             for sample in noise {scheduler.observe(100.0+sample as f64);if scheduler.limit()!=previous {changes+=1;previous=scheduler.limit();}proptest::prop_assert!(scheduler.limit()>=1 && scheduler.limit()<=max);}
-            proptest::prop_assert!(changes<=2);proptest::prop_assert_eq!(scheduler.limit(),1);
+            proptest::prop_assert!(changes<=2);proptest::prop_assert!(scheduler.limit()<=2);
         }
     }
 

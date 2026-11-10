@@ -9,7 +9,9 @@ export interface Rules {
 }
 export const defaults: Rules = {
   version: 1,
-  enabled: false,
+  // The extension is installed to take over browser downloads. Browser
+  // downloads remain untouched whenever the desktop bridge cannot accept one.
+  enabled: true,
   allow: [],
   deny: [],
   types: [],

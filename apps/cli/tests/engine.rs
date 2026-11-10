@@ -382,7 +382,8 @@ async fn improving_throughput_splits_relinquished_tails_without_overlap() {
         segments.len() > 1,
         "improving throughput should admit a stealing worker"
     );
-    assert!(segments.len() <= 8);
+    // Ownership records are capped at eight per allowed connection.
+    assert!(segments.len() <= 64);
     let ranges: Vec<_> = segments
         .iter()
         .map(|s| okytes_core::range::ByteRange {

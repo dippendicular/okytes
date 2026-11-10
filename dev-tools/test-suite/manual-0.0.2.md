@@ -86,3 +86,15 @@ reports two `result_large_err` errors in code that 0.0.2 did not change.
 ## 9. Upgrade
 
 - [ ] Install 0.0.2 over 0.0.1: history, settings and the browser host registration survive.
+
+## 10. Scheduler evidence
+
+- [ ] Configure a recurring queue window in Settings using the intended IANA
+  timezone. A queued job starts when the window opens; an active job yields
+  when it closes; a manually paused job stays paused when it reopens.
+- [ ] Run the scheduler harness from an idle machine with a new output
+  directory: `cargo run -p okytes-bench --release --locked -- run --runs 3 --mode both --output .tools/scheduler-benchmark`.
+  Review `summary.json` and every raw result before making a performance claim.
+- [ ] Confirm the `flaky-resets` scenario reports successful restart-resume
+  and a verified final SHA-256. CI archives the same fixed-versus-adaptive
+  evidence weekly and on manual dispatch.

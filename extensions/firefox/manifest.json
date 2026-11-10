@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Okytes Download Manager",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Send downloads to Okytes with browser fallback and explicit site permissions.",
   "permissions": [
     "nativeMessaging",
@@ -9,11 +9,15 @@
     "menus",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "webRequest"
   ],
   "optional_permissions": [
-    "cookies",
-    "webRequest"
+    "cookies"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "optional_host_permissions": [
     "http://*/*",

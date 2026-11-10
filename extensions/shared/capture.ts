@@ -20,6 +20,7 @@ const reasons: Record<string, string> = {
   rate_limited: "Too many requests. Wait a minute and try again.",
   invalid_request: "Okytes rejected the request from this extension version.",
   invalid_url: "Only HTTP and HTTPS links without embedded credentials are supported.",
+  invalid_torrent: "Use a valid v1 magnet link or an HTTP(S) .torrent file.",
   invalid_headers: "This site's session data cannot be handed to Okytes.",
   invalid_filename: "The suggested filename is not valid.",
 };
@@ -38,6 +39,37 @@ export function mediaSource(url: string): string {
   if (path.endsWith(".m3u8")) return `hls+${url}`;
   if (path.endsWith(".mpd")) return `dash+${url}`;
   throw new Error("Choose a .m3u8 or .mpd manifest");
+}
+export function validMagnet(value: string): boolean {
+  try {
+    const url = new URL(value);
+    let infoHash = false;
+    url.searchParams.forEach((item, key) => {
+      if (key === "xt" && /^urn:btih:/i.test(item)) infoHash = true;
+    });
+    return (
+      value.length <= 8192 &&
+      url.protocol === "magnet:" &&
+      !url.hostname &&
+      infoHash
+    );
+  } catch {
+    return false;
+  }
+}
+export function validTorrentUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      value.length <= 8192 &&
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !!url.hostname &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
 }
 // Each request has a bounded lifetime; the MV3 worker can reconnect on the next
 // user/browser event. The extension never receives the desktop handshake token.
@@ -117,6 +149,32 @@ export async function handoff(
       throw error;
     return nativeRequest(api, request);
   }
+}
+
+// Do not retry a torrent add: unlike HTTP capture, the torrent engine assigns
+// its own durable ID and an ambiguous reconnect could create a duplicate.
+export async function handoffTorrent(
+  api: Browser,
+  magnet: string,
+): Promise<Response> {
+  if (!validMagnet(magnet)) throw new BridgeError("invalid_torrent");
+  return nativeRequest(api, {
+    version: 1,
+    id: crypto.randomUUID(),
+    operation: { kind: "Torrent", value: { magnet, metainfo_url: null, headers: [] } },
+  });
+}
+export async function handoffTorrentUrl(
+  api: Browser,
+  metainfo_url: string,
+  headers: [string, string][],
+): Promise<Response> {
+  if (!validTorrentUrl(metainfo_url)) throw new BridgeError("invalid_torrent");
+  return nativeRequest(api, {
+    version: 1,
+    id: crypto.randomUUID(),
+    operation: { kind: "Torrent", value: { magnet: null, metainfo_url, headers } },
+  });
 }
 
 // Do not pause first: a killed extension/worker must leave the original browser

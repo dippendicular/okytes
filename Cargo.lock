@@ -4839,7 +4839,9 @@ dependencies = [
 name = "okytes-desktop-service"
 version = "0.0.2"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "futures",
  "okytes-browser-bridge",
  "okytes-core",
  "okytes-persistence",

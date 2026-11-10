@@ -1,5 +1,7 @@
 //! Validated VOD plans; durable data writes and publication remain in core.
 mod manifests;
+mod resolver;
+pub use resolver::{ManifestResolver, MediaResolver, ResolvedMedia};
 use bytes::Bytes;
 use futures::StreamExt;
 use okytes_core::{

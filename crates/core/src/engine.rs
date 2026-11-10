@@ -1,10 +1,11 @@
 //! Transfer orchestration. Workers own disjoint ranges and yield at bounded
-//! request boundaries. Data is synced before checkpoint commits. Control state
+//! request boundaries; a free worker takes over the unreserved tail of the
+//! largest unfinished range. Data is synced before checkpoint commits. Control state
 //! is authoritative in SQLite, allowing another CLI to pause a foreground runner.
 pub use crate::store::JobStore;
 use crate::{
     error::{EngineError, EngineResult, TransportError},
-    range::{allocate_ranges, validate_ranges},
+    range::{allocate_ranges, validate_ranges, Lease},
     scheduler::{retry_delay, EwmaThroughput},
     service::{DownloadProgress, DownloadService, EngineEvent},
     state::{JobState, SegmentState},
@@ -22,7 +23,10 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tokio::{
@@ -60,6 +64,31 @@ struct Active<'a> {
 struct Worker<'a> {
     counts: &'a Mutex<HashMap<JobId, u32>>,
     id: JobId,
+}
+/// A failed request that still committed this much does not use up the retry
+/// budget: a link that drops repeatedly but keeps moving finishes the file.
+/// The floor keeps requests per quantum bounded.
+const RETRY_PROGRESS_BYTES: u64 = 64 * 1024;
+/// A resumable request with no body bytes for this long is replaced by a new
+/// one from the last durable offset instead of waiting out the read timeout.
+const STALL_SECS: u64 = 20;
+/// One in-flight request: its live byte ownership and the last record the
+/// store holds. The record lock orders a worker's checkpoints against a split
+/// of its tail; the scheduler only ever tries it, because workers make progress
+/// solely while the scheduler polls them.
+struct Flight {
+    lease: Lease,
+    durable: tokio::sync::Mutex<SegmentRecord>,
+}
+/// Per-transfer counters written by workers and drained by the scheduler tick.
+#[derive(Default)]
+struct Pulse {
+    /// Bytes accepted from the network: the throughput signal.
+    received: AtomicU64,
+    /// Bytes checkpointed: reported progress.
+    bytes: AtomicU64,
+    /// Retryable request failures: the health signal.
+    failures: AtomicU32,
 }
 impl Drop for Worker<'_> {
     fn drop(&mut self) {
@@ -618,7 +647,8 @@ impl Engine {
             job.remote_identity.last_modified.is_some()
                 && job.remote_identity.content_length.is_some()
         } else {
-            job.remote_identity.strong_etag().is_some()
+            job.remote_identity.if_range().is_some()
+                && job.remote_identity.content_length.is_some()
         };
         if durable > 0
             && (!resumable_identity || !job.remote_identity.is_compatible(&probe.remote_identity))
@@ -741,15 +771,20 @@ impl Engine {
                 }
             }
             let mut total_segments = segments.len();
+            // Every split adds an ownership record. Bound them separately from
+            // the connection limit, so idle workers can keep taking over the
+            // tail of a slow one until the file is done.
+            let segment_cap = self.config.max_segments_per_job.saturating_mul(8).min(1024);
             let mut completed_segments = segments.iter().filter(|s| s.is_complete()).count();
             let mut pending: VecDeque<_> =
                 segments.into_iter().filter(|s| !s.is_complete()).collect();
+            let pulse = Pulse::default();
+            let mut flights: HashMap<crate::types::SegmentId, Arc<Flight>> = HashMap::new();
             let mut workers = FuturesUnordered::new();
             let mut tuning =
                 crate::scheduler::AdaptiveConcurrency::new(self.config.max_segments_per_job);
             let mut ewma = EwmaThroughput::new(self.config.ewma_alpha);
             let mut progress = durable;
-            let mut sampled = 0;
             let mut window = Instant::now();
             let mut first_error = None;
             self.telemetry.observe(
@@ -761,36 +796,70 @@ impl Engine {
                 let admission = self.config.fixed_concurrency.unwrap_or(tuning.limit());
                 while !self.queue_allowed()? && self.running(id).await? {
                     tokio::time::sleep(Duration::from_millis(100)).await;
+                    // A closed schedule window is not a throughput sample.
+                    window = Instant::now();
                 }
-                if first_error.is_some() || !self.running(id).await? {
+                let live = first_error.is_none() && self.running(id).await?;
+                if !live {
                     pending.clear();
                 }
-                // Split only relinquished tails: no active response can still
-                // own either half. Persist both ownership updates atomically.
-                while probe.checkpoint_ranges.is_none()
+                // Give a free worker half of the largest unfinished range,
+                // whether it is waiting or being downloaded. Both ownership
+                // records are persisted atomically before the new half starts.
+                while live
+                    && probe.checkpoint_ranges.is_none()
                     && workers.len() + pending.len() < admission
-                    && total_segments < self.config.max_segments_per_job
+                    && total_segments < segment_cap
                 {
-                    let Some(index) = pending
+                    let idle = pending
                         .iter()
                         .enumerate()
-                        .max_by_key(|(_, s)| s.length() - s.bytes_downloaded)
-                        .map(|(i, _)| i)
-                    else {
-                        break;
+                        .map(|(index, s)| (s.length() - s.bytes_downloaded, index))
+                        .max();
+                    let busy = flights
+                        .iter()
+                        .map(|(segment, flight)| (flight.lease.remaining(), *segment))
+                        .max();
+                    let tail = match (idle, busy) {
+                        (Some((left, index)), busy)
+                            if busy.is_none_or(|(taken, _)| left >= taken) =>
+                        {
+                            let Some(mut original) = pending.remove(index) else {
+                                break;
+                            };
+                            let Some((left, right)) = crate::range::split_segment(
+                                original.current_offset(),
+                                original.end,
+                                self.config.min_segment_size,
+                            ) else {
+                                pending.push_back(original);
+                                break;
+                            };
+                            original.end = left.end;
+                            pending.push_back(original.clone());
+                            (original, right)
+                        }
+                        (_, Some((_, victim))) => {
+                            let Some(flight) = flights.get(&victim) else {
+                                break;
+                            };
+                            // Its worker is committing a checkpoint; the next
+                            // tick sees the settled record.
+                            let Ok(mut record) = flight.durable.try_lock() else {
+                                break;
+                            };
+                            // The request stops at the new boundary by itself:
+                            // it reserves every byte through the same lease.
+                            let Some(right) = flight.lease.steal(self.config.min_segment_size)
+                            else {
+                                break;
+                            };
+                            record.end = right.start - 1;
+                            (record.clone(), right)
+                        }
+                        _ => break,
                     };
-                    let Some(mut original) = pending.remove(index) else {
-                        break;
-                    };
-                    let Some((left, right)) = crate::range::split_segment(
-                        original.current_offset(),
-                        original.end,
-                        self.config.min_segment_size,
-                    ) else {
-                        pending.push_back(original);
-                        break;
-                    };
-                    original.end = left.end;
+                    let (original, right) = tail;
                     let stolen = SegmentRecord {
                         id: Uuid::new_v4(),
                         job_id: id,
@@ -801,51 +870,68 @@ impl Engine {
                         last_checkpoint: Utc::now(),
                     };
                     self.store
-                        .save_segments(&[original.clone(), stolen.clone()])
+                        .save_segments(&[original, stolen.clone()])
                         .await?;
-                    pending.push_back(original);
                     pending.push_back(stolen);
                     total_segments += 1;
                 }
                 while workers.len() < admission && !pending.is_empty() {
                     if let Some(segment) = pending.pop_front() {
-                        workers.push(self.quantum(&job, segment));
+                        let stop = segment.end.min(
+                            segment
+                                .current_offset()
+                                .saturating_add(self.config.max_segment_size.max(1) - 1),
+                        ) + 1;
+                        let flight = Arc::new(Flight {
+                            lease: Lease::new(segment.current_offset(), stop, segment.end),
+                            durable: tokio::sync::Mutex::new(segment.clone()),
+                        });
+                        flights.insert(segment.id, flight.clone());
+                        workers.push(self.quantum(&job, segment, flight, &pulse));
                     }
                 }
-                if let Some(result) = workers.next().await {
-                    let (segment, bytes, failures, latency_ms) = match result {
-                        Ok(result) => result,
+                // Wake on a finished request or on the clock, so admission,
+                // splitting and throughput sampling do not wait for a large
+                // request to end.
+                tokio::select! {
+                    Some(result) = workers.next() => match result {
+                        Ok((mut segment, latency_ms)) => {
+                            if let Some(flight) = flights.remove(&segment.id) {
+                                segment.end = flight.lease.end();
+                            }
+                            tuning.health(0, latency_ms);
+                            if segment.is_complete() {
+                                completed_segments += 1;
+                            } else if first_error.is_none() && self.running(id).await? {
+                                pending.push_back(segment);
+                            }
+                        }
                         Err(error) => {
                             first_error.get_or_insert(error);
-                            continue;
                         }
-                    };
-                    tuning.health(failures, latency_ms);
-                    progress += bytes;
-                    sampled += bytes;
-                    if segment.is_complete() {
-                        completed_segments += 1;
-                    }
-                    if first_error.is_none() && !segment.is_complete() && self.running(id).await? {
-                        pending.push_back(segment);
-                    }
-                    if window.elapsed() >= Duration::from_millis(250) {
-                        ewma.record(sampled, window.elapsed());
-                        tuning.observe(ewma.value());
-                        self.telemetry.observe(id, admission, ewma.value());
-                        sampled = 0;
-                        window = Instant::now();
-                        let _ = self.events.send(EngineEvent::Progress(DownloadProgress {
-                            job_id: id,
-                            state: JobState::Downloading,
-                            bytes_downloaded: progress,
-                            total_size: job.total_size,
-                            throughput_bps: ewma.value(),
-                            active_segments: workers.len(),
-                            completed_segments,
-                            total_segments,
-                        }));
-                    }
+                    },
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                }
+                let failed = pulse.failures.swap(0, Ordering::Relaxed);
+                if failed > 0 {
+                    tuning.health(failed, 0.0);
+                }
+                if window.elapsed() >= Duration::from_millis(250) {
+                    progress += pulse.bytes.swap(0, Ordering::Relaxed);
+                    ewma.record(pulse.received.swap(0, Ordering::Relaxed), window.elapsed());
+                    tuning.observe(ewma.value());
+                    self.telemetry.observe(id, admission, ewma.value());
+                    window = Instant::now();
+                    let _ = self.events.send(EngineEvent::Progress(DownloadProgress {
+                        job_id: id,
+                        state: JobState::Downloading,
+                        bytes_downloaded: progress,
+                        total_size: job.total_size,
+                        throughput_bps: ewma.value(),
+                        active_segments: workers.len(),
+                        completed_segments,
+                        total_segments,
+                    }));
                 }
             }
             if let Some(error) = first_error {
@@ -857,29 +943,35 @@ impl Engine {
         }
         self.finalize(id).await
     }
-    // Each bounded request relinquishes range ownership. Idle workers can take
-    // subsequent quanta of a slow segment without racing an active writer.
+    // One bounded request per call; ownership returns to the scheduler when it
+    // ends. Meanwhile a free worker can take the unreserved tail through the
+    // flight's lease, without racing this writer.
     async fn quantum(
         &self,
         job: &JobRecord,
         mut segment: SegmentRecord,
-    ) -> EngineResult<(SegmentRecord, u64, u32, f64)> {
+        flight: Arc<Flight>,
+        pulse: &Pulse,
+    ) -> EngineResult<(SegmentRecord, f64)> {
         let _worker = self.worker(job.id)?;
         let headers = self.session_headers(job)?;
-        let before = segment.bytes_downloaded;
-        let end = segment.end.min(
-            segment
-                .current_offset()
-                .saturating_add(self.config.max_segment_size.max(1) - 1),
+        let link = self.telemetry.open(
+            job.id,
+            segment.start,
+            segment.current_offset(),
+            Some(flight.lease.stop().saturating_sub(1)),
         );
-        let link = self
-            .telemetry
-            .open(job.id, segment.start, segment.current_offset(), Some(end));
-        for attempt in 0..=self.config.max_retries {
-            if !self.running(job.id).await? {
-                return Ok((segment, 0, 0, 0.0));
+        // Consecutive failed requests that committed too little to count.
+        let mut failures = 0;
+        let mut latency_ms = 0.0;
+        loop {
+            // Bytes a failed request reserved but never committed are free again.
+            flight.lease.rewind(segment.current_offset());
+            let stop = flight.lease.stop();
+            if segment.current_offset() >= stop || !self.running(job.id).await? {
+                break;
             }
-            if attempt > 0 {
+            if failures > 0 {
                 link.set_state(crate::telemetry::LinkState::Connecting);
             }
             let Some(permit) = self
@@ -890,7 +982,7 @@ impl Engine {
                 )
                 .await?
             else {
-                return Ok((segment, 0, 0, 0.0));
+                break;
             };
             let permit = permit?;
             let response_started = Instant::now();
@@ -900,16 +992,16 @@ impl Engine {
                     self.transport.fetch(
                         &job.url,
                         &headers,
-                        Some((segment.current_offset(), end)),
+                        Some((segment.current_offset(), stop - 1)),
                         &job.remote_identity,
                     ),
                 )
                 .await?
             else {
-                let delta = segment.bytes_downloaded - before;
-                return Ok((segment, delta, attempt, 0.0));
+                break;
             };
-            let latency_ms = response_started.elapsed().as_secs_f64() * 1000.0;
+            latency_ms = response_started.elapsed().as_secs_f64() * 1000.0;
+            let before = segment.bytes_downloaded;
             let result = match response {
                 Ok(response) => {
                     self.response_received(job.id, response.status, response_started);
@@ -918,8 +1010,15 @@ impl Engine {
                     }
                     segment.state = segment.state.transition(SegmentState::Active, job.id)?;
                     link.set_state(crate::telemetry::LinkState::Downloading);
-                    self.stream(job, &mut segment, response.body, Some(end + 1), true, &link)
-                        .await
+                    self.stream(
+                        job,
+                        &mut segment,
+                        response.body,
+                        Some(stop),
+                        Some((&*flight, pulse)),
+                        &link,
+                    )
+                    .await
                 }
                 Err(source) => Err(EngineError::Transport {
                     job_id: job.id,
@@ -928,51 +1027,87 @@ impl Engine {
             };
             drop(permit);
             match result {
-                Ok(()) => {
-                    if segment.is_complete() {
-                        segment.state = segment.state.transition(SegmentState::Complete, job.id)?;
-                        self.store.checkpoint_segment(&segment).await?;
+                Ok(()) => break,
+                Err(EngineError::Transport { source, .. }) if retryable(&source) => {
+                    if segment.bytes_downloaded - before >= RETRY_PROGRESS_BYTES {
+                        failures = 0;
                     }
-                    let delta = segment.bytes_downloaded - before;
-                    return Ok((segment, delta, attempt, latency_ms));
-                }
-                Err(EngineError::Transport { source, .. })
-                    if retryable(&source) && attempt < self.config.max_retries =>
-                {
-                    tracing::warn!(job_id=%job.id,attempt,"retrying segment");
-                    link.retrying(attempt + 1);
-                    self.delay(job.id, attempt, &source).await?;
+                    if failures >= self.config.max_retries {
+                        return Err(EngineError::Transport {
+                            job_id: job.id,
+                            source,
+                        });
+                    }
+                    pulse.failures.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!(job_id=%job.id,attempt=failures,"retrying segment");
+                    link.retrying(failures + 1);
+                    self.delay(job.id, failures, &source).await?;
+                    failures += 1;
                 }
                 Err(error) => return Err(error),
             }
         }
-        Err(EngineError::Scheduler("retry budget exhausted".into()))
+        // A split may have moved the end while this request ran.
+        let mut durable = flight.durable.lock().await;
+        segment.end = flight.lease.end();
+        if segment.is_complete() {
+            segment.state = segment.state.transition(SegmentState::Complete, job.id)?;
+            self.store.checkpoint_segment(&segment).await?;
+            *durable = segment.clone();
+        }
+        drop(durable);
+        Ok((segment, latency_ms))
     }
+    // `shared` is present for a resumable ranged request: bytes are reserved
+    // through its lease and checkpointed. A full stream passes `None`.
     async fn stream(
         &self,
         job: &JobRecord,
         segment: &mut SegmentRecord,
         mut body: crate::transport::ByteStream,
         end: Option<u64>,
-        checkpoint: bool,
+        shared: Option<(&Flight, &Pulse)>,
         link: &crate::telemetry::LinkGuard<'_>,
     ) -> EngineResult<()> {
         let buffer_limit = self.config.write_buffer_size.min(256 * 1024);
         let mut pending = Vec::with_capacity(buffer_limit);
         let mut control_check = Instant::now() - Duration::from_millis(100);
-        loop {
+        // Only a resumable request is worth replacing when it goes silent.
+        let stall =
+            shared.map(|_| Duration::from_secs(self.config.read_timeout_secs.min(STALL_SECS)));
+        let mut last_data = Instant::now();
+        let mut failure = None;
+        let mut finished = false;
+        'body: loop {
             if control_check.elapsed() >= Duration::from_millis(100) {
                 if !self.running(job.id).await? {
-                    return Ok(());
+                    break;
                 }
                 control_check = Instant::now();
             }
-            let next = tokio::select! {next=body.next()=>next,_=tokio::time::sleep(Duration::from_millis(100))=>continue};
-            let Some(chunk) = next else { break };
-            let chunk = chunk.map_err(|source| EngineError::Transport {
-                job_id: job.id,
-                source: Box::new(source),
-            })?;
+            let next = tokio::select! {
+                next = body.next() => next,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if stall.is_some_and(|limit| last_data.elapsed() >= limit) {
+                        failure = Some(TransportError::Timeout {
+                            url: Box::new(job.url.clone()),
+                        });
+                        break;
+                    }
+                    continue;
+                }
+            };
+            let Some(chunk) = next else {
+                finished = true;
+                break;
+            };
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(source) => {
+                    failure = Some(source);
+                    break;
+                }
+            };
             if end.is_some_and(|end| {
                 segment
                     .current_offset()
@@ -983,6 +1118,14 @@ impl Engine {
                 return Err(EngineError::Scheduler("body exceeded owned range".into()));
             }
             let mut incoming = chunk.as_ref();
+            // Another worker may have taken the tail of this range: accept
+            // only the bytes still owned, then end the request.
+            let mut bounded = false;
+            if let Some((flight, _)) = shared {
+                let granted = flight.lease.reserve(incoming.len() as u64) as usize;
+                bounded = granted < incoming.len();
+                incoming = &incoming[..granted];
+            }
             while !incoming.is_empty() {
                 let wanted = incoming.len().min(buffer_limit - pending.len()).min(16384);
                 let take = loop {
@@ -996,25 +1139,40 @@ impl Engine {
                         break granted;
                     }
                     if !self.running(job.id).await? {
-                        return Ok(());
+                        break 'body;
                     }
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 };
                 pending.extend_from_slice(&incoming[..take]);
                 link.received(take);
+                if let Some((_, pulse)) = shared {
+                    pulse.received.fetch_add(take as u64, Ordering::Relaxed);
+                }
                 incoming = &incoming[take..];
                 if pending.len() == buffer_limit {
-                    self.durable_checkpoint(&job.partial_path, segment, &pending, checkpoint)
+                    self.durable_checkpoint(&job.partial_path, segment, &pending, shared)
                         .await?;
                     pending.clear();
                 }
             }
+            last_data = Instant::now();
+            if bounded {
+                break;
+            }
         }
+        // Keep what arrived before a pause, a split or a dropped connection:
+        // the next request continues from here instead of fetching it again.
         if !pending.is_empty() {
-            self.durable_checkpoint(&job.partial_path, segment, &pending, checkpoint)
+            self.durable_checkpoint(&job.partial_path, segment, &pending, shared)
                 .await?;
         }
-        if end.is_some_and(|end| segment.current_offset() != end) {
+        if let Some(source) = failure {
+            return Err(EngineError::Transport {
+                job_id: job.id,
+                source: Box::new(source),
+            });
+        }
+        if finished && end.is_some_and(|end| segment.current_offset() != end) {
             return Err(EngineError::Transport {
                 job_id: job.id,
                 source: Box::new(TransportError::DataCorruption {
@@ -1030,12 +1188,13 @@ impl Engine {
         path: &Path,
         segment: &mut SegmentRecord,
         bytes: &[u8],
-        persist: bool,
+        shared: Option<(&Flight, &Pulse)>,
     ) -> EngineResult<()> {
         let offset = segment.current_offset();
         let mut next = segment.clone();
         next.bytes_downloaded += bytes.len() as u64;
         next.last_checkpoint = Utc::now();
+        let committed = &mut next;
         commit_durable(
             async {
                 let mut file = self.files.open(path).await?;
@@ -1047,16 +1206,26 @@ impl Engine {
             },
             |file: tokio::fs::File| async move { file.sync_data().await.map_err(|e| io(path, e)) },
             async {
-                if persist {
-                    self.store.checkpoint_segment(&next).await?;
+                if let Some((flight, _)) = shared {
+                    // Read the end under the record lock: a split persisted
+                    // since the last checkpoint must not be written back.
+                    let mut durable = flight.durable.lock().await;
+                    committed.end = flight.lease.end();
+                    self.store.checkpoint_segment(committed).await?;
+                    *durable = committed.clone();
                 }
                 Ok(())
             },
         )
         .await?;
-        if !persist {
-            if let Ok(mut progress) = self.full_progress.lock() {
-                progress.insert(next.job_id, next.bytes_downloaded);
+        match shared {
+            Some((_, pulse)) => {
+                pulse.bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+            }
+            None => {
+                if let Ok(mut progress) = self.full_progress.lock() {
+                    progress.insert(next.job_id, next.bytes_downloaded);
+                }
             }
         }
         *segment = next;
@@ -1107,7 +1276,7 @@ impl Engine {
             &mut segment,
             response.body,
             job.total_size,
-            false,
+            None,
             &link,
         )
         .await

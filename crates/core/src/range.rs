@@ -206,10 +206,106 @@ pub fn split_segment(
     Some((first, second))
 }
 
+/// Ownership of the byte range one in-flight request may still write.
+///
+/// The worker reserves bytes before accepting them; the scheduler may take the
+/// unreserved tail for another worker. Both go through one short critical
+/// section, so a byte is never owned by two writers.
+#[derive(Debug)]
+pub struct Lease {
+    // (frontier, stop, end): next unreserved offset, exclusive bound of the
+    // current request, inclusive last byte of the owned segment.
+    bounds: std::sync::Mutex<(u64, u64, u64)>,
+}
+
+impl Lease {
+    /// Lease `[offset, end]`; the current request may write up to `stop` (exclusive).
+    pub fn new(offset: u64, stop: u64, end: u64) -> Self {
+        let stop = stop.min(end.saturating_add(1));
+        Self {
+            bounds: std::sync::Mutex::new((offset.min(stop), stop, end)),
+        }
+    }
+    fn bounds(&self) -> std::sync::MutexGuard<'_, (u64, u64, u64)> {
+        // Plain integers stay consistent even if a holder panicked.
+        self.bounds
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// Claim up to `wanted` bytes at the frontier. Fewer than `wanted` means
+    /// the request reached its bound and must stop after the granted bytes.
+    pub fn reserve(&self, wanted: u64) -> u64 {
+        let mut bounds = self.bounds();
+        let granted = wanted.min(bounds.1.saturating_sub(bounds.0));
+        bounds.0 += granted;
+        granted
+    }
+    /// Return reserved bytes that were never written, before a new request.
+    pub fn rewind(&self, offset: u64) {
+        let mut bounds = self.bounds();
+        bounds.0 = bounds.0.min(offset);
+    }
+    /// Exclusive bound of the current request.
+    pub fn stop(&self) -> u64 {
+        self.bounds().1
+    }
+    /// Inclusive last byte still owned by this segment.
+    pub fn end(&self) -> u64 {
+        self.bounds().2
+    }
+    /// Bytes of the segment not yet reserved by its worker.
+    pub fn remaining(&self) -> u64 {
+        let bounds = self.bounds();
+        (bounds.2 - bounds.0.min(bounds.2)).saturating_add(u64::from(bounds.0 <= bounds.2))
+    }
+    /// Give away the second half of the unreserved bytes. Both halves keep at
+    /// least `min_segment_size`. The caller must persist the new ownership
+    /// before any other worker writes the returned range.
+    pub fn steal(&self, min_segment_size: u64) -> Option<ByteRange> {
+        let mut bounds = self.bounds();
+        let (_, tail) = split_segment(bounds.0, bounds.2, min_segment_size)?;
+        bounds.2 = tail.start - 1;
+        bounds.1 = bounds.1.min(tail.start);
+        Some(tail)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    proptest! {
+        #[test]
+        fn lease_steals_never_overlap_reserved_bytes(len in 2u64..1_000_000,quantum in 1u64..1_000_000,steps in proptest::collection::vec((0u64..70_000,any::<bool>()),1..64)) {
+            let lease=Lease::new(0,quantum,len-1);
+            let (mut written,mut stolen,mut floor)=(0u64,0u64,len);
+            for (bytes,steal) in steps {
+                if steal {
+                    if let Some(tail)=lease.steal(1) {
+                        prop_assert!(tail.start>=written && tail.end+1==floor);
+                        stolen+=tail.length();floor=tail.start;
+                    }
+                } else {
+                    written+=lease.reserve(bytes);
+                }
+                prop_assert!(written<=lease.stop() && lease.stop()<=floor);
+                prop_assert_eq!(lease.end()+1,floor);
+                prop_assert_eq!(written+lease.remaining()+stolen,len);
+            }
+        }
+    }
+    #[test]
+    fn lease_bounds_the_request_and_returns_unwritten_bytes() {
+        let lease = Lease::new(100, 200, 999);
+        assert_eq!(lease.reserve(150), 100);
+        assert_eq!(lease.reserve(1), 0);
+        lease.rewind(150);
+        assert_eq!(lease.remaining(), 850);
+        let tail = lease.steal(100).unwrap();
+        assert_eq!((tail.start, tail.end), (575, 999));
+        assert_eq!((lease.stop(), lease.end()), (200, 574));
+        assert!(lease.steal(400).is_none());
+    }
     proptest! {
         #[test]
         fn allocations_cover_without_overlap(size in any::<u64>(),cap in 1usize..129,min in 1u64..1_000_000,max in 1u64..1_000_000) {
